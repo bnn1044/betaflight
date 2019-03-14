@@ -169,11 +169,11 @@ extern const timerHardware_t timerHardware[];
 #if defined(USE_TIMER_MGMT)
 #if defined(STM32F4)
 
-#define FULL_TIMER_CHANNEL_COUNT 70
+#define FULL_TIMER_CHANNEL_COUNT 78
 
 #elif defined(STM32F7)
 
-#define FULL_TIMER_CHANNEL_COUNT 70
+#define FULL_TIMER_CHANNEL_COUNT 78
 
 #endif
 
@@ -261,6 +261,7 @@ uint8_t timerInputIrq(TIM_TypeDef *tim);
 timerIOConfig_t *timerIoConfigByTag(ioTag_t ioTag);
 #endif
 const timerHardware_t *timerGetByTag(ioTag_t ioTag);
+const timerHardware_t *timerGetByTagAndIndex(ioTag_t ioTag, unsigned timerIndex);
 ioTag_t timerioTagGetByUsage(timerUsageFlag_e usageFlag, uint8_t index);
 
 #if defined(USE_HAL_DRIVER)
