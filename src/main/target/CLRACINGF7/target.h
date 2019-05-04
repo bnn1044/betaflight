@@ -45,11 +45,16 @@
 #define USE_ACC_SPI_MPU6500
 #define USE_GYRO_SPI_MPU6500
 
+#define USE_ACCGYRO_BMI160
+#ifdef  USE_ACCGYRO_BMI160
+#define BMI160_SPI_DIVISOR      16
+#define GYRO_1_ALIGN            CW270_DEG
+#define ACC_1_ALIGN             CW270_DEG
+#endif
+
 #define GYRO_1_CS_PIN           PA4
 #define GYRO_1_SPI_INSTANCE     SPI1
 
-#define GYRO_1_ALIGN            CW0_DEG
-#define ACC_1_ALIGN             CW0_DEG
 
 #define USE_MAG
 #define USE_MAG_HMC5883
