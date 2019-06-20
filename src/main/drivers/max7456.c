@@ -172,23 +172,14 @@
 
 #define CHARS_PER_LINE      30 // XXX Should be related to VIDEO_BUFFER_CHARS_*?
 
-// On shared SPI buss we want to change clock for OSD chip and restore for other devices.
+// On shared SPI bus we want to change clock for OSD chip and restore for other devices.
 
 #ifdef USE_SPI_TRANSACTION
     #define __spiBusTransactionBegin(busdev)        spiBusTransactionBegin(busdev)
     #define __spiBusTransactionEnd(busdev)          spiBusTransactionEnd(busdev)
 #else
-#ifdef MAX7456_SPI_CLK
     #define __spiBusTransactionBegin(busdev)        {spiBusSetDivisor(busdev, max7456SpiClock);IOLo((busdev)->busdev_u.spi.csnPin);}
-#else
-    #define __spiBusTransactionBegin(busdev)        IOLo((busdev)->busdev_u.spi.csnPin)
-#endif
-
-#ifdef MAX7456_RESTORE_CLK
     #define __spiBusTransactionEnd(busdev)       {IOHi((busdev)->busdev_u.spi.csnPin);spiSetDivisor((busdev)->busdev_u.spi.instance, MAX7456_RESTORE_CLK);}
-#else
-    #define __spiBusTransactionEnd(busdev)       IOHi((busdev)->busdev_u.spi.csnPin)
-#endif
 #endif
 
 busDevice_t max7456BusDevice;
@@ -571,14 +562,16 @@ uint8_t* max7456GetScreenBuffer(void)
 
 void max7456WriteChar(uint8_t x, uint8_t y, uint8_t c)
 {
-    screenBuffer[y*CHARS_PER_LINE+x] = c;
+    if (x < CHARS_PER_LINE && y < VIDEO_LINES_PAL) {
+        screenBuffer[y * CHARS_PER_LINE + x] = c;
+    }
 }
 
 void max7456Write(uint8_t x, uint8_t y, const char *buff)
 {
-    for (int i = 0; *(buff+i); i++) {
-        if (x+i < CHARS_PER_LINE) {// Do not write over screen
-            screenBuffer[y*CHARS_PER_LINE+x+i] = *(buff+i);
+    if (y < VIDEO_LINES_PAL) {
+        for (int i = 0; buff[i] && x + i < CHARS_PER_LINE; i++) {
+            screenBuffer[y * CHARS_PER_LINE + x + i] = buff[i];
         }
     }
 }

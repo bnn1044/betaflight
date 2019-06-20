@@ -116,8 +116,22 @@ typedef struct {
     bool isAvailable;
 } rescueState_s;
 
-#define GPS_RESCUE_MAX_YAW_RATE       180  // deg/sec max yaw rate
-#define GPS_RESCUE_RATE_SCALE_DEGREES 45   // Scale the commanded yaw rate when the error is less then this angle
+typedef enum {
+    MAX_ALT,
+    FIXED_ALT,
+    CURRENT_ALT
+} altitudeMode_e;
+
+#define GPS_RESCUE_MAX_YAW_RATE         180 // deg/sec max yaw rate
+#define GPS_RESCUE_RATE_SCALE_DEGREES    45 // Scale the commanded yaw rate when the error is less then this angle
+#define GPS_RESCUE_SLOWDOWN_DISTANCE_M  200 // distance from home to start decreasing speed
+#define GPS_RESCUE_MIN_DESCENT_DIST_M    30 // minimum descent distance allowed
+
+#ifdef USE_MAG
+#define GPS_RESCUE_USE_MAG              true
+#else
+#define GPS_RESCUE_USE_MAG              false
+#endif
 
 PG_REGISTER_WITH_RESET_TEMPLATE(gpsRescueConfig_t, gpsRescueConfig, PG_GPS_RESCUE, 1);
 
@@ -140,7 +154,10 @@ PG_RESET_TEMPLATE(gpsRescueConfig_t, gpsRescueConfig,
     .minSats = 8,
     .minRescueDth = 100,
     .allowArmingWithoutFix = false,
-    .useMag = true
+    .useMag = GPS_RESCUE_USE_MAG,
+    .targetLandingAltitudeM = 5,
+    .targetLandingDistanceM = 10,
+    .altitudeMode = MAX_ALT,
 );
 
 static uint16_t rescueThrottle;
@@ -156,6 +173,7 @@ bool          magForceDisable = false;
 static bool newGPSData = false;
 
 rescueState_s rescueState;
+altitudeMode_e altitudeMode;
 
 /*
  If we have new GPS data, update home heading
@@ -299,7 +317,7 @@ static void rescueAttainPosition()
 
     previousAltitudeError = altitudeError;
 
-    const int16_t altitudeAdjustment = (gpsRescueConfig()->throttleP * altitudeError + (gpsRescueConfig()->throttleI * altitudeIntegral) / 10 *  + gpsRescueConfig()->throttleD * altitudeDerivative) / ct / 20;
+    const int16_t altitudeAdjustment = (gpsRescueConfig()->throttleP * altitudeError + (gpsRescueConfig()->throttleI * altitudeIntegral) / 10 + gpsRescueConfig()->throttleD * altitudeDerivative) / ct / 20;
     const int16_t hoverAdjustment = (hoverThrottle - 1000) / ct;
 
     rescueThrottle = constrain(1000 + altitudeAdjustment + hoverAdjustment, gpsRescueConfig()->throttleMin, gpsRescueConfig()->throttleMax);
@@ -370,12 +388,15 @@ static void performSanityChecks()
         lastDistanceToHomeM = rescueState.sensor.distanceToHomeM;
 
         if (secondsFlyingAway == 10) {
+#ifdef USE_MAG
             //If there is a mag and has not been disabled, we have to assume is healthy and has been used in imu.c
             if (sensors(SENSOR_MAG) && gpsRescueConfig()->useMag && !magForceDisable) {
                 //Try again with mag disabled
                 magForceDisable = true;
                 secondsFlyingAway = 0;
-            } else {
+            } else
+#endif
+            {
                 rescueState.failure = RESCUE_FLYAWAY;
             }
         }
@@ -470,6 +491,12 @@ static bool checkGPSRescueIsAvailable(void)
 */
 void updateGPSRescueState(void)
 {
+    static uint16_t newDescentDistanceM;
+    static float_t lineSlope;
+    static float_t lineOffsetM;
+    static int32_t newSpeed;
+    static uint32_t newAltitude;
+
     if (!FLIGHT_MODE(GPS_RESCUE_MODE)) {
         rescueStop();
     } else if (FLIGHT_MODE(GPS_RESCUE_MODE) && rescueState.phase == RESCUE_IDLE) {
@@ -510,6 +537,30 @@ void updateGPSRescueState(void)
             
             // When not in failsafe mode: leave it up to the sanity check setting.
         }
+        
+        newSpeed = gpsRescueConfig()->rescueGroundspeed;
+        //set new descent distance if actual distance to home is lower 
+        if (rescueState.sensor.distanceToHomeM < gpsRescueConfig()->descentDistanceM) {
+            newDescentDistanceM = MAX(rescueState.sensor.distanceToHomeM - 5, GPS_RESCUE_MIN_DESCENT_DIST_M);
+        } else {
+            newDescentDistanceM = gpsRescueConfig()->descentDistanceM;
+        }
+        
+        switch (altitudeMode) {
+            case MAX_ALT:
+                newAltitude = MAX(gpsRescueConfig()->initialAltitudeM * 100, rescueState.sensor.maxAltitudeCm + 1500);
+                break;
+            case FIXED_ALT:
+                newAltitude = gpsRescueConfig()->initialAltitudeM * 100;
+                break;
+            case CURRENT_ALT:
+                newAltitude = rescueState.sensor.currentAltitudeCm;
+                break;
+        }
+
+        //Calculate angular coefficient and offset for equation of line from 2 points needed for RESCUE_LANDING_APPROACH
+        lineSlope = ((float)gpsRescueConfig()->initialAltitudeM  - gpsRescueConfig()->targetLandingAltitudeM) / (newDescentDistanceM - gpsRescueConfig()->targetLandingDistanceM);
+        lineOffsetM = gpsRescueConfig()->initialAltitudeM - lineSlope * newDescentDistanceM;
 
         rescueState.phase = RESCUE_ATTAIN_ALT;
         FALLTHROUGH;
@@ -520,39 +571,43 @@ void updateGPSRescueState(void)
         }
 
         rescueState.intent.targetGroundspeed = 500;
-        rescueState.intent.targetAltitudeCm = MAX(gpsRescueConfig()->initialAltitudeM * 100, rescueState.sensor.maxAltitudeCm + 1500);
+        rescueState.intent.targetAltitudeCm = newAltitude;
         rescueState.intent.crosstrack = true;
         rescueState.intent.minAngleDeg = 10;
         rescueState.intent.maxAngleDeg = 15;
         break;
     case RESCUE_CROSSTRACK:
-        if (rescueState.sensor.distanceToHomeM < gpsRescueConfig()->descentDistanceM) {
+        if (rescueState.sensor.distanceToHomeM <= newDescentDistanceM) {
             rescueState.phase = RESCUE_LANDING_APPROACH;
         }
 
         // We can assume at this point that we are at or above our RTH height, so we need to try and point to home and tilt while maintaining alt
         // Is our altitude way off?  We should probably kick back to phase RESCUE_ATTAIN_ALT
         rescueState.intent.targetGroundspeed = gpsRescueConfig()->rescueGroundspeed;
-        rescueState.intent.targetAltitudeCm = MAX(gpsRescueConfig()->initialAltitudeM * 100, rescueState.sensor.maxAltitudeCm + 1500);
+        rescueState.intent.targetAltitudeCm = newAltitude;
         rescueState.intent.crosstrack = true;
         rescueState.intent.minAngleDeg = 15;
         rescueState.intent.maxAngleDeg = gpsRescueConfig()->angle;
         break;
     case RESCUE_LANDING_APPROACH:
         // We are getting close to home in the XY plane, get Z where it needs to be to move to landing phase
-        if (rescueState.sensor.distanceToHomeM < 10 && rescueState.sensor.currentAltitudeCm <= 1000) {
+        if (rescueState.sensor.distanceToHomeM <= gpsRescueConfig()->targetLandingDistanceM && rescueState.sensor.currentAltitudeCm <= gpsRescueConfig()->targetLandingAltitudeM * 100) {
             rescueState.phase = RESCUE_LANDING;
         }
 
         // Only allow new altitude and new speed to be equal or lower than the current values (to prevent parabolic movement on overshoot)
-        const int32_t newAlt = gpsRescueConfig()->initialAltitudeM * 100  * rescueState.sensor.distanceToHomeM / gpsRescueConfig()->descentDistanceM;
-        const int32_t newSpeed = gpsRescueConfig()->rescueGroundspeed * rescueState.sensor.distanceToHomeM / gpsRescueConfig()->descentDistanceM;
+        const int32_t newAlt = MAX((lineSlope * rescueState.sensor.distanceToHomeM + lineOffsetM) * 100, 0);
+        
+        // Start to decrease proportionally the quad's speed when the distance to home is less or equal than GPS_RESCUE_SLOWDOWN_DISTANCE_M
+        if (rescueState.sensor.distanceToHomeM <= GPS_RESCUE_SLOWDOWN_DISTANCE_M) {
+            newSpeed = gpsRescueConfig()->rescueGroundspeed * rescueState.sensor.distanceToHomeM / GPS_RESCUE_SLOWDOWN_DISTANCE_M;
+        }
 
         rescueState.intent.targetAltitudeCm = constrain(newAlt, 100, rescueState.intent.targetAltitudeCm);
         rescueState.intent.targetGroundspeed = constrain(newSpeed, 100, rescueState.intent.targetGroundspeed);
         rescueState.intent.crosstrack = true;
         rescueState.intent.minAngleDeg = 10;
-        rescueState.intent.maxAngleDeg = 20;
+        rescueState.intent.maxAngleDeg = gpsRescueConfig()->angle;
         break;
     case RESCUE_LANDING:
         // We have reached the XYZ envelope to be considered at "home".  We need to land gently and check our accelerometer for abnormal data.
@@ -623,9 +678,11 @@ bool gpsRescueIsDisabled(void)
     return (!STATE(GPS_FIX_HOME));
 }
 
+#ifdef USE_MAG
 bool gpsRescueDisableMag(void)
 {
     return ((!gpsRescueConfig()->useMag || magForceDisable) && (rescueState.phase >= RESCUE_INITIALIZE) && (rescueState.phase <= RESCUE_LANDING));
 }
+#endif
 #endif
 

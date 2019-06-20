@@ -31,8 +31,17 @@ typedef enum {
     FAILURE_ACC_INIT,
     FAILURE_ACC_INCOMPATIBLE,
     FAILURE_INVALID_EEPROM_CONTENTS,
+    FAILURE_CONFIG_STORE_FAILURE,
+    FAILURE_GYRO_INIT_FAILED,
+    FAILURE_FLASH_READ_FAILED,
     FAILURE_FLASH_WRITE_FAILED,
-    FAILURE_GYRO_INIT_FAILED
+    FAILURE_FLASH_INIT_FAILED, // RESERVED
+    FAILURE_EXTERNAL_FLASH_READ_FAILED,  // RESERVED
+    FAILURE_EXTERNAL_FLASH_WRITE_FAILED, // RESERVED
+    FAILURE_EXTERNAL_FLASH_INIT_FAILED,
+    FAILURE_SDCARD_READ_FAILED,
+    FAILURE_SDCARD_WRITE_FAILED,
+    FAILURE_SDCARD_INITIALISATION_FAILED,
 } failureMode_e;
 
 #define WARNING_FLASH_DURATION_MS 50
@@ -51,6 +60,8 @@ void systemResetToBootloader(void);
 void checkForBootLoaderRequest(void);
 bool isMPUSoftReset(void);
 void cycleCounterInit(void);
+
+void initialiseMemorySections(void);
 
 void enableGPIOPowerUsageAndNoiseReductions(void);
 // current crystal frequency - 8 or 12MHz

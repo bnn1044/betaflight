@@ -49,18 +49,22 @@
 #define GYRO_1_SPI_INSTANCE     SPI1
 
 #define GYRO_1_ALIGN            CW0_DEG
-#define ACC_1_ALIGN             CW0_DEG
 
 #define USE_MAG
 #define USE_MAG_HMC5883
 #define USE_MAG_QMC5883
 #define MAG_I2C_INSTANCE         (I2CDEV_2)
 
+#define DEFAULT_FEATURES        (FEATURE_OSD)
 #define USE_MAX7456
 #define MAX7456_SPI_INSTANCE    SPI3
 #define MAX7456_SPI_CS_PIN      PA15
-#define MAX7456_SPI_CLK         (SPI_CLOCK_STANDARD) // 10MHz
-#define MAX7456_RESTORE_CLK     (SPI_CLOCK_FAST)
+
+#define ENABLE_BLACKBOX_LOGGING_ON_SPIFLASH_BY_DEFAULT
+#define USE_FLASHFS
+#define USE_FLASH_M25P16
+#define FLASH_CS_PIN            PB12
+#define FLASH_SPI_INSTANCE      SPI2
 
 #define USE_VCP
 
@@ -97,6 +101,8 @@
 #define USE_I2C
 #define USE_I2C_DEVICE_2       // External I2C
 #define I2C_DEVICE               (I2CDEV_2)
+#define I2C2_SCL                NONE        // PB10 (UART3_TX)
+#define I2C2_SDA                NONE        // PB11 (UART3_RX)
 
 #define USE_SPI
 #define USE_SPI_DEVICE_1
@@ -124,11 +130,13 @@
 #define CURRENT_METER_ADC_PIN   PC1
 #define VBAT_ADC_PIN            PC2
 #define RSSI_ADC_PIN            PC3
+
 #define CURRENT_METER_SCALE_DEFAULT 250                     // 3.3/120A  = 25mv/A
 
 #define BINDPLUG_PIN            PB2
 #define DEFAULT_RX_FEATURE      FEATURE_RX_SERIAL
 #define SERIALRX_UART           SERIAL_PORT_UART5
+#define SERIALRX_PROVIDER       SERIALRX_SBUS
 
 #define TARGET_IO_PORTA         0xffff
 #define TARGET_IO_PORTB         0xffff

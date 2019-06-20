@@ -106,9 +106,11 @@ void pgResetFn_motorConfig(motorConfig_t *motorConfig)
     motorConfig->dev.useBurstDshot = ENABLE_DSHOT_DMAR;
 #endif
 
+#ifdef USE_TIMER
     for (int motorIndex = 0; motorIndex < MAX_SUPPORTED_MOTORS; motorIndex++) {
         motorConfig->dev.ioTags[motorIndex] = timerioTagGetByUsage(TIM_USE_MOTOR, motorIndex);
     }
+#endif
 
     motorConfig->motorPoleCount = 14;   // Most brushes motors that we use are 14 poles
 }
@@ -516,15 +518,19 @@ void mixerResetDisarmedMotors(void)
 
 void writeMotors(void)
 {
+#ifdef USE_PWM_OUTPUT
     if (pwmAreMotorsEnabled()) {
 #if defined(USE_DSHOT) && defined(USE_DSHOT_TELEMETRY)
-        pwmStartMotorUpdate(motorCount);
+        if (!pwmStartMotorUpdate(motorCount)) {
+            return;
+        }
 #endif
         for (int i = 0; i < motorCount; i++) {
             pwmWriteMotor(i, motor[i]);
         }
         pwmCompleteMotorUpdate(motorCount);
     }
+#endif
 }
 
 static void writeAllMotors(int16_t mc)
@@ -544,8 +550,10 @@ void stopMotors(void)
 
 void stopPwmAllMotors(void)
 {
+#ifdef USE_PWM_OUTPUT
     pwmShutdownPulsesForAllMotors(motorCount);
     delayMicroseconds(1500);
+#endif
 }
 
 static FAST_RAM_ZERO_INIT float throttle = 0;
@@ -1037,3 +1045,15 @@ float mixerGetLoggingThrottle(void)
 {
     return loggingThrottle;
 }
+
+#ifdef USE_DSHOT_TELEMETRY
+bool isDshotTelemetryActive(void)
+{
+    for (uint8_t i = 0; i < motorCount; i++) {
+        if (!isDshotMotorTelemetryActive(i)) {
+            return false;
+        }
+    }
+    return true;
+}
+#endif

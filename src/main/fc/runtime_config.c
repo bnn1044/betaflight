@@ -40,6 +40,7 @@ const char *armingDisableFlagNames[]= {
     "BADRX",
     "BOXFAILSAFE",
     "RUNAWAY",
+    "CRASH",
     "THROTTLE",
     "ANGLE",
     "BOOTGRACE",
@@ -52,7 +53,9 @@ const char *armingDisableFlagNames[]= {
     "MSP",
     "PARALYZE",
     "GPS",
-    "RESCUE SW",
+    "RESCUE_SW",
+    "RPMFILTER",
+    "REBOOT_REQD",
     "ARMSWITCH",
 };
 
