@@ -274,6 +274,11 @@ typedef enum dumpFlags_e {
 
 typedef bool printFn(dumpFlags_t dumpMask, bool equalsDefault, const char *format, ...);
 
+typedef enum {
+    REBOOT_TARGET_FIRMWARE,
+    REBOOT_TARGET_BOOTLOADER_ROM,
+    REBOOT_TARGET_BOOTLOADER_FLASH,
+} rebootTarget_e;
 
 static void backupPgConfig(const pgRegistry_t *pg)
 {
@@ -2447,8 +2452,7 @@ static void cliVtx(char *cmdline)
             ptr = nextArg(ptr);
             if (ptr) {
                 val = atoi(ptr);
-                // FIXME Use VTX API to get max
-                if (val >= 0 && val <= VTX_SETTINGS_MAX_BAND) {
+                if (val >= 0 && val <= vtxTableBandCount) {
                     cac->band = val;
                     validArgumentCount++;
                 }
@@ -2456,8 +2460,7 @@ static void cliVtx(char *cmdline)
             ptr = nextArg(ptr);
             if (ptr) {
                 val = atoi(ptr);
-                // FIXME Use VTX API to get max
-                if (val >= 0 && val <= VTX_SETTINGS_MAX_CHANNEL) {
+                if (val >= 0 && val <= vtxTableChannelCount) {
                     cac->channel = val;
                     validArgumentCount++;
                 }
@@ -2465,8 +2468,7 @@ static void cliVtx(char *cmdline)
             ptr = nextArg(ptr);
             if (ptr) {
                 val = atoi(ptr);
-                // FIXME Use VTX API to get max
-                if (val >= 0 && val < VTX_SETTINGS_POWER_COUNT) {
+                if (val >= 0 && val < vtxTablePowerLevels) {
                     cac->power= val;
                     validArgumentCount++;
                 }
@@ -2497,11 +2499,12 @@ static void cliVtx(char *cmdline)
 
 #ifdef USE_VTX_TABLE
 
-static char *formatVtxTableBandFrequency(const uint16_t *frequency, int channels)
+static char *formatVtxTableBandFrequency(const bool isFactory, const uint16_t *frequency, int channels)
 {
-    static char freqbuf[5 * VTX_TABLE_MAX_CHANNELS + 1];
+    static char freqbuf[5 * VTX_TABLE_MAX_CHANNELS + 8 + 1];
     char freqtmp[5 + 1];
     freqbuf[0] = 0;
+    strcat(freqbuf, isFactory ? " FACTORY" : " CUSTOM ");
     for (int channel = 0; channel < channels; channel++) {
         tfp_sprintf(freqtmp, " %4d", frequency[channel]);
         strcat(freqbuf, freqtmp);
@@ -2528,11 +2531,11 @@ static const char *printVtxTableBand(dumpFlags_t dumpMask, int band, const vtxTa
               }
         }
         headingStr = cliPrintSectionHeading(dumpMask, !equalsDefault, headingStr);
-        char *freqbuf = formatVtxTableBandFrequency(defaultConfig->frequency[band], defaultConfig->channels);
+        char *freqbuf = formatVtxTableBandFrequency(defaultConfig->isFactoryBand[band], defaultConfig->frequency[band], defaultConfig->channels);
         cliDefaultPrintLinef(dumpMask, equalsDefault, fmt, band + 1, defaultConfig->bandNames[band], defaultConfig->bandLetters[band], freqbuf);
     }
 
-    char *freqbuf = formatVtxTableBandFrequency(currentConfig->frequency[band], currentConfig->channels);
+    char *freqbuf = formatVtxTableBandFrequency(currentConfig->isFactoryBand[band], currentConfig->frequency[band], currentConfig->channels);
     cliDumpPrintLinef(dumpMask, equalsDefault, fmt, band + 1, currentConfig->bandNames[band], currentConfig->bandLetters[band], freqbuf);
     return headingStr;
 }
@@ -2817,8 +2820,20 @@ static void cliVtxTable(char *cmdline)
         uint16_t bandfreq[VTX_TABLE_MAX_CHANNELS];
         int channel = 0;
         int channels = vtxTableConfigMutable()->channels;
+        bool isFactory = false;
 
         for (channel = 0; channel <  channels && (tok  = strtok_r(NULL, " ", &saveptr)); channel++) {
+            if (channel == 0 && !isdigit(tok[0])) {
+                channel -= 1;
+                if (strcasecmp(tok, "FACTORY") == 0) {
+                    isFactory = true;
+                } else if (strcasecmp(tok, "CUSTOM") == 0) {
+                    isFactory = false;
+                } else {
+                    cliPrintErrorLinef("INVALID FACTORY FLAG %s (EXPECTED FACTORY OR CUSTOM)", tok);
+                    return;
+                }
+            }
             int freq = atoi(tok);
             if (freq < 0) {
                 cliPrintErrorLinef("INVALID FREQUENCY %s", tok);
@@ -2841,6 +2856,7 @@ static void cliVtxTable(char *cmdline)
         for (int i = 0; i < channel; i++) {
             vtxTableConfigMutable()->frequency[band][i] = bandfreq[i];
         }
+        vtxTableConfigMutable()->isFactoryBand[band] = isFactory;
     } else {
         // Bad subcommand
         cliPrintErrorLinef("INVALID SUBCOMMAND %s", tok);
@@ -3309,31 +3325,61 @@ static char *checkCommand(char *cmdline, const char *command)
     }
 }
 
-static void cliRebootEx(bool bootLoader)
+static void cliRebootEx(rebootTarget_e rebootTarget)
 {
     cliPrint("\r\nRebooting");
     bufWriterFlush(cliWriter);
     waitForSerialPortToFinishTransmitting(cliPort);
     stopPwmAllMotors();
 
-    if (bootLoader) {
-        systemResetToBootloader();
-        return;
+    switch (rebootTarget) {
+    case REBOOT_TARGET_BOOTLOADER_ROM:
+        systemResetToBootloader(BOOTLOADER_REQUEST_ROM);
+
+        break;
+#if defined(USE_FLASH_BOOT_LOADER)
+    case REBOOT_TARGET_BOOTLOADER_FLASH:
+        systemResetToBootloader(BOATLOADER_REQUEST_FLASH);
+
+        break;
+#endif
+    case REBOOT_TARGET_FIRMWARE:
+    default:
+        systemReset();
+
+        break;
     }
-    systemReset();
 }
 
 static void cliReboot(void)
 {
-    cliRebootEx(false);
+    cliRebootEx(REBOOT_TARGET_FIRMWARE);
 }
 
 static void cliBootloader(char *cmdline)
 {
-    UNUSED(cmdline);
+    rebootTarget_e rebootTarget;
+    if (
+#if !defined(USE_FLASH_BOOT_LOADER)
+        isEmpty(cmdline) ||
+#endif
+        strncasecmp(cmdline, "rom", 3) == 0) {
+        rebootTarget = REBOOT_TARGET_BOOTLOADER_ROM;
 
-    cliPrintHashLine("restarting in bootloader mode");
-    cliRebootEx(true);
+        cliPrintHashLine("restarting in ROM bootloader mode");
+#if defined(USE_FLASH_BOOT_LOADER)
+    } else if (isEmpty(cmdline) || strncasecmp(cmdline, "flash", 5) == 0) {
+        rebootTarget = REBOOT_TARGET_BOOTLOADER_FLASH;
+
+        cliPrintHashLine("restarting in flash bootloader mode");
+#endif
+    } else {
+        cliPrintErrorLinef("Invalid option");
+
+        return;
+    }
+
+    cliRebootEx(rebootTarget);
 }
 
 static void cliExit(char *cmdline)
@@ -5873,7 +5919,11 @@ const clicmd_t cmdTable[] = {
 #ifdef USE_RX_SPI
         CLI_COMMAND_DEF("bind_rx_spi", "initiate binding for RX SPI", NULL, cliRxSpiBind),
 #endif
-    CLI_COMMAND_DEF("bl", "reboot into bootloader", NULL, cliBootloader),
+#if defined(USE_FLASH_BOOT_LOADER)
+    CLI_COMMAND_DEF("bl", "reboot into bootloader", "[flash|rom]", cliBootloader),
+#else
+    CLI_COMMAND_DEF("bl", "reboot into bootloader", "[rom]", cliBootloader),
+#endif
 #if defined(USE_BOARD_INFO)
     CLI_COMMAND_DEF("board_name", "get / set the name of the board model", "[board name]", cliBoardName),
 #endif
@@ -5999,7 +6049,7 @@ const clicmd_t cmdTable[] = {
 #endif
 #endif
 #ifdef USE_VTX_TABLE
-    CLI_COMMAND_DEF("vtxtable", "vtx frequency able", "<band> <bandname> <bandletter> <freq> ... <freq>\r\n", cliVtxTable),
+    CLI_COMMAND_DEF("vtxtable", "vtx frequency able", "<band> <bandname> <bandletter> [FACTORY|CUSTOM] <freq> ... <freq>\r\n", cliVtxTable),
 #endif
 };
 
