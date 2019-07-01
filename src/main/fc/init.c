@@ -138,6 +138,7 @@
 #include "pg/bus_quadspi.h"
 #include "pg/flash.h"
 #include "pg/mco.h"
+#include "pg/motor.h"
 #include "pg/pinio.h"
 #include "pg/piniobox.h"
 #include "pg/pg.h"
@@ -259,26 +260,6 @@ void sdCardAndFSInit()
 
 void init(void)
 {
-#ifdef USE_HAL_DRIVER
-    HAL_Init();
-#endif
-
-#if defined(STM32F7)   
-    /* Enable I-Cache */
-    if (INSTRUCTION_CACHE_ENABLE) {
-        SCB_EnableICache();
-    }
-
-    /* Enable D-Cache */
-    if (DATA_CACHE_ENABLE) {
-        SCB_EnableDCache();
-    }
-
-    if (PREFETCH_ENABLE) {
-        LL_FLASH_EnablePrefetch();
-    }
-#endif
-
 #ifdef SERIAL_PORT_COUNT
     printfSerialInit();
 #endif

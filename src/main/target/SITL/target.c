@@ -49,6 +49,7 @@ const timerHardware_t timerHardware[1]; // unused
 #include "scheduler/scheduler.h"
 
 #include "pg/rx.h"
+#include "pg/motor.h"
 
 #include "rx/rx.h"
 
@@ -409,6 +410,10 @@ void servoDevInit(const servoDevConfig_t *servoConfig) {
 
 pwmOutputPort_t *pwmGetMotors(void) {
     return motors;
+}
+
+void pwmDisableMotors(void) {
+    pwmMotorsEnabled = false;
 }
 
 void pwmEnableMotors(void) {

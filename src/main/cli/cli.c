@@ -130,6 +130,7 @@ uint8_t cliMode = 0;
 #include "pg/gyrodev.h"
 #include "pg/max7456.h"
 #include "pg/mco.h"
+#include "pg/motor.h"
 #include "pg/pinio.h"
 #include "pg/pg.h"
 #include "pg/pg_ids.h"
@@ -140,6 +141,7 @@ uint8_t cliMode = 0;
 #include "pg/serial_uart.h"
 #include "pg/sdio.h"
 #include "pg/timerio.h"
+#include "pg/timerup.h"
 #include "pg/usb.h"
 #include "pg/vtx_table.h"
 
@@ -1264,10 +1266,11 @@ static void cliSerialPassthrough(char *cmdline)
         return;
     }
 
-    serialPassthroughPort_t ports[2] = { {SERIAL_PORT_NONE, 0, 0, NULL}, { SERIAL_PORT_USB_VCP, 0, 0, cliPort} };
+    serialPassthroughPort_t ports[2] = { {SERIAL_PORT_NONE, 0, 0, NULL}, {cliPort->identifier, 0, 0, cliPort} };
     bool enableBaudCb = false;
     int port1PinioDtr = 0;
     bool port1ResetOnDtr = false;
+    bool escSensorPassthrough = false;
     char *saveptr;
     char* tok = strtok_r(cmdline, " ", &saveptr);
     int index = 0;
@@ -1275,7 +1278,13 @@ static void cliSerialPassthrough(char *cmdline)
     while (tok != NULL) {
         switch (index) {
         case 0:
-            ports[0].id = atoi(tok);
+            if (strcasestr(tok, "esc_sensor")) {
+                escSensorPassthrough = true;
+                const serialPortConfig_t *portConfig = findSerialPortConfig(FUNCTION_ESC_SENSOR);
+                ports[0].id = portConfig->identifier;
+            } else {
+                ports[0].id = atoi(tok);
+            }
             break;
         case 1:
             ports[0].baud = atoi(tok);
@@ -1414,6 +1423,30 @@ static void cliSerialPassthrough(char *cmdline)
         // Register control line state callback
         serialSetCtrlLineStateCb(ports[0].port, cbCtrlLine, (void *)(intptr_t)(port1PinioDtr));
     }
+
+#ifdef USE_PWM_OUTPUT
+    if (escSensorPassthrough) {
+        pwmDisableMotors();
+        delay(5);
+        unsigned motorsCount = getMotorCount();
+        for (unsigned i = 0; i < motorsCount; i++) {
+            const ioTag_t tag = motorConfig()->dev.ioTags[i];
+            if (tag) {
+                const timerHardware_t *timerHardware = timerGetByTag(tag);
+                if (timerHardware) {
+                    IO_t io = IOGetByTag(tag);
+                    IOInit(io, OWNER_MOTOR, 0);
+                    IOConfigGPIO(io, IOCFG_OUT_PP);
+                    if (timerHardware->output & TIMER_OUTPUT_INVERTED) {
+                        IOLo(io);
+                    } else {
+                        IOHi(io);
+                    }
+                }
+            }
+        }
+    }
+#endif
 
     serialPassthrough(ports[0].port, ports[1].port, NULL, NULL);
 }
@@ -3339,7 +3372,7 @@ static void cliRebootEx(rebootTarget_e rebootTarget)
         break;
 #if defined(USE_FLASH_BOOT_LOADER)
     case REBOOT_TARGET_BOOTLOADER_FLASH:
-        systemResetToBootloader(BOATLOADER_REQUEST_FLASH);
+        systemResetToBootloader(BOOTLOADER_REQUEST_FLASH);
 
         break;
 #endif
@@ -4868,6 +4901,7 @@ typedef struct dmaoptEntry_s {
     uint8_t stride;
     uint8_t offset;
     uint8_t maxIndex;
+    uint32_t presenceMask;
 } dmaoptEntry_t;
 
 // Handy macros for keeping the table tidy.
@@ -4876,21 +4910,26 @@ typedef struct dmaoptEntry_s {
 // DEFW : Wider stride case; array of structs.
 
 #define DEFS(device, peripheral, pgn, type, member) \
-    { device, peripheral, pgn, 0,               offsetof(type, member), 0 }
+    { device, peripheral, pgn, 0,               offsetof(type, member), 0, 0 }
 
-#define DEFA(device, peripheral, pgn, type, member, max) \
-    { device, peripheral, pgn, sizeof(uint8_t), offsetof(type, member), max }
+#define DEFA(device, peripheral, pgn, type, member, max, mask) \
+    { device, peripheral, pgn, sizeof(uint8_t), offsetof(type, member), max, mask }
 
-#define DEFW(device, peripheral, pgn, type, member, max) \
-    { device, peripheral, pgn, sizeof(type), offsetof(type, member), max }
+#define DEFW(device, peripheral, pgn, type, member, max, mask) \
+    { device, peripheral, pgn, sizeof(type), offsetof(type, member), max, mask }
+
+#define MASK_IGNORED (0)
 
 dmaoptEntry_t dmaoptEntryTable[] = {
-    DEFW("SPI_TX",  DMA_PERIPH_SPI_TX,  PG_SPI_PIN_CONFIG,     spiPinConfig_t,     txDmaopt, SPIDEV_COUNT),
-    DEFW("SPI_RX",  DMA_PERIPH_SPI_RX,  PG_SPI_PIN_CONFIG,     spiPinConfig_t,     rxDmaopt, SPIDEV_COUNT),
-    DEFA("ADC",     DMA_PERIPH_ADC,     PG_ADC_CONFIG,         adcConfig_t,        dmaopt,   ADCDEV_COUNT),
+    DEFW("SPI_TX",  DMA_PERIPH_SPI_TX,  PG_SPI_PIN_CONFIG,     spiPinConfig_t,     txDmaopt, SPIDEV_COUNT,                    MASK_IGNORED),
+    DEFW("SPI_RX",  DMA_PERIPH_SPI_RX,  PG_SPI_PIN_CONFIG,     spiPinConfig_t,     rxDmaopt, SPIDEV_COUNT,                    MASK_IGNORED),
+    DEFA("ADC",     DMA_PERIPH_ADC,     PG_ADC_CONFIG,         adcConfig_t,        dmaopt,   ADCDEV_COUNT,                    MASK_IGNORED),
     DEFS("SDIO",    DMA_PERIPH_SDIO,    PG_SDIO_CONFIG,        sdioConfig_t,       dmaopt),
-    DEFW("UART_TX", DMA_PERIPH_UART_TX, PG_SERIAL_UART_CONFIG, serialUartConfig_t, txDmaopt, UARTDEV_CONFIG_MAX),
-    DEFW("UART_RX", DMA_PERIPH_UART_RX, PG_SERIAL_UART_CONFIG, serialUartConfig_t, rxDmaopt, UARTDEV_CONFIG_MAX),
+    DEFW("UART_TX", DMA_PERIPH_UART_TX, PG_SERIAL_UART_CONFIG, serialUartConfig_t, txDmaopt, UARTDEV_CONFIG_MAX,              MASK_IGNORED),
+    DEFW("UART_RX", DMA_PERIPH_UART_RX, PG_SERIAL_UART_CONFIG, serialUartConfig_t, rxDmaopt, UARTDEV_CONFIG_MAX,              MASK_IGNORED),
+#ifdef STM32H7
+    DEFW("TIMUP",   DMA_PERIPH_TIMUP,   PG_TIMER_UP_CONFIG,    timerUpConfig_t,    dmaopt,   HARDWARE_TIMER_DEFINITION_COUNT, TIMUP_TIMERS),
+#endif
 };
 
 #undef DEFS
@@ -5128,7 +5167,7 @@ static void cliDmaopt(char *cmdline)
     pch = strtok_r(NULL, " ", &saveptr);
     if (entry) {
         index = atoi(pch) - 1;
-        if (index < 0 || index >= entry->maxIndex) {
+        if (index < 0 || index >= entry->maxIndex || !((entry->presenceMask != MASK_IGNORED) && (entry->presenceMask & BIT(index + 1)))) {
             cliPrintErrorLinef("BAD INDEX: '%s'", pch ? pch : "");
             return;
         }
