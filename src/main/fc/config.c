@@ -33,6 +33,8 @@
 #include "config/config_eeprom.h"
 #include "config/feature.h"
 
+#include "drivers/dshot_command.h"
+#include "drivers/motor.h"
 #include "drivers/system.h"
 
 #include "fc/config.h"
@@ -63,6 +65,7 @@
 #include "pg/pg_ids.h"
 #include "pg/motor.h"
 #include "pg/rx.h"
+#include "pg/gyrodev.h"
 
 #include "rx/rx.h"
 
@@ -71,6 +74,9 @@
 #include "sensors/acceleration.h"
 #include "sensors/battery.h"
 #include "sensors/gyro.h"
+#include "sensors/compass.h"
+
+#include "common/sensor_alignment.h"
 
 static bool configIsDirty; /* someone indicated that the config is modified and it is not yet saved */
 
@@ -162,6 +168,13 @@ static void activateConfig(void)
 #endif
 }
 
+static void adjustFilterLimit(uint16_t *parm, uint16_t resetValue)
+{
+    if (*parm > FILTER_FREQUENCY_MAX) {
+        *parm = resetValue;
+    }
+}
+
 static void validateAndFixConfig(void)
 {
 #if !defined(USE_QUAD_MIXER_ONLY)
@@ -200,6 +213,13 @@ static void validateAndFixConfig(void)
     }
 
     for (unsigned i = 0; i < PID_PROFILE_COUNT; i++) {
+        // Fix filter settings to handle cases where an older configurator was used that
+        // allowed higher cutoff limits from previous firmware versions.
+        adjustFilterLimit(&pidProfilesMutable(i)->dterm_lowpass_hz, FILTER_FREQUENCY_MAX);
+        adjustFilterLimit(&pidProfilesMutable(i)->dterm_lowpass2_hz, FILTER_FREQUENCY_MAX);
+        adjustFilterLimit(&pidProfilesMutable(i)->dterm_notch_hz, FILTER_FREQUENCY_MAX);
+        adjustFilterLimit(&pidProfilesMutable(i)->dterm_notch_cutoff, 0);
+
         // Prevent invalid notch cutoff
         if (pidProfilesMutable(i)->dterm_notch_cutoff >= pidProfilesMutable(i)->dterm_notch_hz) {
             pidProfilesMutable(i)->dterm_notch_hz = 0;
@@ -241,6 +261,12 @@ static void validateAndFixConfig(void)
     }
 
     validateAndFixGyroConfig();
+
+    buildAlignmentFromStandardAlignment(&compassConfigMutable()->mag_customAlignment, compassConfig()->mag_alignment);
+    buildAlignmentFromStandardAlignment(&gyroDeviceConfigMutable(0)->customAlignment, gyroDeviceConfig(0)->alignment);
+#if defined(USE_MULTI_GYRO)
+    buildAlignmentFromStandardAlignment(&gyroDeviceConfigMutable(1)->customAlignment, gyroDeviceConfig(1)->alignment);
+#endif
 
     if (!(featureIsEnabled(FEATURE_RX_PARALLEL_PWM) || featureIsEnabled(FEATURE_RX_PPM) || featureIsEnabled(FEATURE_RX_SERIAL) || featureIsEnabled(FEATURE_RX_MSP) || featureIsEnabled(FEATURE_RX_SPI))) {
         featureEnable(DEFAULT_RX_FEATURE);
@@ -512,6 +538,15 @@ void validateAndFixGyroConfig(void)
         featureDisable(FEATURE_DYNAMIC_FILTER);
     }
 #endif
+
+    // Fix gyro filter settings to handle cases where an older configurator was used that
+    // allowed higher cutoff limits from previous firmware versions.
+    adjustFilterLimit(&gyroConfigMutable()->gyro_lowpass_hz, FILTER_FREQUENCY_MAX);
+    adjustFilterLimit(&gyroConfigMutable()->gyro_lowpass2_hz, FILTER_FREQUENCY_MAX);
+    adjustFilterLimit(&gyroConfigMutable()->gyro_soft_notch_hz_1, FILTER_FREQUENCY_MAX);
+    adjustFilterLimit(&gyroConfigMutable()->gyro_soft_notch_cutoff_1, 0);
+    adjustFilterLimit(&gyroConfigMutable()->gyro_soft_notch_hz_2, FILTER_FREQUENCY_MAX);
+    adjustFilterLimit(&gyroConfigMutable()->gyro_soft_notch_cutoff_2, 0);
 
     // Prevent invalid notch cutoff
     if (gyroConfig()->gyro_soft_notch_cutoff_1 >= gyroConfig()->gyro_soft_notch_hz_1) {

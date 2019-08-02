@@ -27,6 +27,9 @@ OPBL      ?= no
 # compile for External Storage Bootloader support
 EXST      ?= no
 
+# compile for target loaded into RAM
+RAM_BASED ?= no
+
 # Debugger optons:
 #   empty           - ordinary build with all optimizations enabled
 #   RELWITHDEBINFO  - ordinary build with debug symbols and all optimizations enabled
@@ -468,7 +471,7 @@ TARGETS_FLASH = $(addsuffix _flash,$(VALID_TARGETS) )
 
 ## <TARGET>_flash    : build and flash a target
 $(TARGETS_FLASH):
-	$(V0) $(MAKE) -j hex TARGET=$(subst _flash,,$@)
+	$(V0) $(MAKE) binary hex TARGET=$(subst _flash,,$@)
 ifneq (,$(findstring /dev/ttyUSB,$(SERIAL_DEVICE)))
 	$(V0) $(MAKE) tty_flash TARGET=$(subst _flash,,$@)
 else

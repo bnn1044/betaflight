@@ -71,7 +71,10 @@ uint8_t cliMode = 0;
 #include "drivers/io.h"
 #include "drivers/io_impl.h"
 #include "drivers/light_led.h"
-#include "drivers/pwm_output.h"
+#include "drivers/motor.h"
+#include "drivers/dshot.h"
+#include "drivers/dshot_dpwm.h"
+#include "drivers/dshot_command.h"
 #include "drivers/rangefinder/rangefinder_hcsr04.h"
 #include "drivers/sdcard.h"
 #include "drivers/sensor.h"
@@ -481,6 +484,11 @@ static void printValuePointer(const clivalue_t *var, const void *valuePointer, b
             case VAR_INT16:
                 // int16_t array
                 cliPrintf("%d", ((int16_t *)valuePointer)[i]);
+                break;
+
+            case VAR_UINT32:
+                // uin32_t array
+                cliPrintf("%u", ((uint32_t *)valuePointer)[i]);
                 break;
             }
 
@@ -1424,9 +1432,11 @@ static void cliSerialPassthrough(char *cmdline)
         serialSetCtrlLineStateCb(ports[0].port, cbCtrlLine, (void *)(intptr_t)(port1PinioDtr));
     }
 
+// XXX Review ESC pass through under refactored motor handling
 #ifdef USE_PWM_OUTPUT
     if (escSensorPassthrough) {
-        pwmDisableMotors();
+        // pwmDisableMotors();
+        motorDisable();
         delay(5);
         unsigned motorsCount = getMotorCount();
         for (unsigned i = 0; i < motorsCount; i++) {
@@ -3363,7 +3373,7 @@ static void cliRebootEx(rebootTarget_e rebootTarget)
     cliPrint("\r\nRebooting");
     bufWriterFlush(cliWriter);
     waitForSerialPortToFinishTransmitting(cliPort);
-    stopPwmAllMotors();
+    motorShutdown();
 
     switch (rebootTarget) {
     case REBOOT_TARGET_BOOTLOADER_ROM:
@@ -3664,13 +3674,16 @@ static void executeEscInfoCommand(uint8_t escIndex)
 
     startEscDataRead(escInfoBuffer, ESC_INFO_BLHELI32_EXPECTED_FRAME_SIZE);
 
-    pwmWriteDshotCommand(escIndex, getMotorCount(), DSHOT_CMD_ESC_INFO, true);
+    dshotCommandWrite(escIndex, getMotorCount(), DSHOT_CMD_ESC_INFO, true);
 
     delay(10);
 
     printEscInfo(escInfoBuffer, getNumberEscBytesRead());
 }
 #endif // USE_ESC_SENSOR && USE_ESC_SENSOR_INFO
+
+
+// XXX Review dshotprog command under refactored motor handling
 
 static void cliDshotProg(char *cmdline)
 {
@@ -3699,7 +3712,8 @@ static void cliDshotProg(char *cmdline)
                 int command = atoi(pch);
                 if (command >= 0 && command < DSHOT_MIN_THROTTLE) {
                     if (firstCommand) {
-                        pwmDisableMotors();
+                        // pwmDisableMotors();
+                        motorDisable();
 
                         if (command == DSHOT_CMD_ESC_INFO) {
                             delay(5); // Wait for potential ESC telemetry transmission to finish
@@ -3711,7 +3725,7 @@ static void cliDshotProg(char *cmdline)
                     }
 
                     if (command != DSHOT_CMD_ESC_INFO) {
-                        pwmWriteDshotCommand(escIndex, getMotorCount(), command, true);
+                        dshotCommandWrite(escIndex, getMotorCount(), command, true);
                     } else {
 #if defined(USE_ESC_SENSOR) && defined(USE_ESC_SENSOR_INFO)
                         if (featureIsEnabled(FEATURE_ESC_SENSOR)) {
@@ -3743,7 +3757,7 @@ static void cliDshotProg(char *cmdline)
         pch = strtok_r(NULL, " ", &saveptr);
     }
 
-    pwmEnableMotors();
+    motorEnable();
 }
 #endif // USE_DSHOT
 
@@ -3875,7 +3889,7 @@ static void cliMotor(char *cmdline)
         if (motorValue < PWM_RANGE_MIN || motorValue > PWM_RANGE_MAX) {
             cliShowArgumentRangeError("VALUE", 1000, 2000);
         } else {
-            uint32_t motorOutputValue = convertExternalToMotor(motorValue);
+            uint32_t motorOutputValue = motorConvertFromExternal(motorValue);
 
             if (motorIndex != ALL_MOTORS) {
                 motor_disarmed[motorIndex] = motorOutputValue;
@@ -4314,6 +4328,15 @@ STATIC_UNIT_TESTED void cliSet(char *cmdline)
                             // store value
                             *data = (int16_t)atoi((const char*) valPtr);
                         }
+
+                        break;
+                    case VAR_UINT32:
+                        {
+                            // fetch data pointer
+                            uint32_t *data = (uint32_t *)cliGetValuePointer(val) + i;
+                            // store value
+                            *data = (uint32_t)strtoul((const char*) valPtr, NULL, 10);
+                       }
 
                         break;
                     }
@@ -4868,6 +4891,7 @@ static bool strToPin(char *pch, ioTag_t *tag)
     return false;
 }
 
+#ifdef USE_DMA
 static void printDma(void)
 {
     cliPrintLinefeed();
@@ -4891,6 +4915,7 @@ static void printDma(void)
         }
     }
 }
+#endif
 
 #ifdef USE_DMA_SPEC
 
@@ -4904,21 +4929,21 @@ typedef struct dmaoptEntry_s {
     uint32_t presenceMask;
 } dmaoptEntry_t;
 
+#define MASK_IGNORED (0)
+
 // Handy macros for keeping the table tidy.
 // DEFS : Single entry
 // DEFA : Array of uint8_t (stride = 1)
 // DEFW : Wider stride case; array of structs.
 
 #define DEFS(device, peripheral, pgn, type, member) \
-    { device, peripheral, pgn, 0,               offsetof(type, member), 0, 0 }
+    { device, peripheral, pgn, 0,               offsetof(type, member), 0, MASK_IGNORED }
 
 #define DEFA(device, peripheral, pgn, type, member, max, mask) \
     { device, peripheral, pgn, sizeof(uint8_t), offsetof(type, member), max, mask }
 
 #define DEFW(device, peripheral, pgn, type, member, max, mask) \
     { device, peripheral, pgn, sizeof(type), offsetof(type, member), max, mask }
-
-#define MASK_IGNORED (0)
 
 dmaoptEntry_t dmaoptEntryTable[] = {
     DEFW("SPI_TX",  DMA_PERIPH_SPI_TX,  PG_SPI_PIN_CONFIG,     spiPinConfig_t,     txDmaopt, SPIDEV_COUNT,                    MASK_IGNORED),
@@ -5167,7 +5192,7 @@ static void cliDmaopt(char *cmdline)
     pch = strtok_r(NULL, " ", &saveptr);
     if (entry) {
         index = atoi(pch) - 1;
-        if (index < 0 || index >= entry->maxIndex || !((entry->presenceMask != MASK_IGNORED) && (entry->presenceMask & BIT(index + 1)))) {
+        if (index < 0 || index >= entry->maxIndex || (entry->presenceMask != MASK_IGNORED && !(entry->presenceMask & BIT(index + 1)))) {
             cliPrintErrorLinef("BAD INDEX: '%s'", pch ? pch : "");
             return;
         }
@@ -5274,6 +5299,7 @@ static void cliDmaopt(char *cmdline)
 }
 #endif // USE_DMA_SPEC
 
+#ifdef USE_DMA
 static void cliDma(char* cmdline)
 {
     int len = strlen(cmdline);
@@ -5289,6 +5315,7 @@ static void cliDma(char* cmdline)
     cliShowParseError();
 #endif
 }
+#endif
 
 static void cliResource(char *cmdline)
 {
@@ -5318,10 +5345,12 @@ static void cliResource(char *cmdline)
             cliPrintLinefeed();
         }
 
+#if defined(USE_DMA)
         pch = strtok_r(NULL, " ", &saveptr);
         if (strcasecmp(pch, "all") == 0) {
             cliDma("show");
         }
+#endif
 
         return;
     }
@@ -5903,7 +5932,7 @@ static void cliMsc(char *cmdline)
         cliPrint("\r\nRebooting");
         bufWriterFlush(cliWriter);
         waitForSerialPortToFinishTransmitting(cliPort);
-        stopPwmAllMotors();
+        motorShutdown();
 
         systemResetToMsc(timezoneOffsetMinutes);
     } else {
@@ -5972,14 +6001,18 @@ const clicmd_t cmdTable[] = {
     CLI_COMMAND_DEF("defaults", "reset to defaults and reboot", "[nosave]", cliDefaults),
     CLI_COMMAND_DEF("diff", "list configuration changes from default", "[master|profile|rates|hardware|all] {defaults|bare}", cliDiff),
 #ifdef USE_RESOURCE_MGMT
+
+#ifdef USE_DMA
 #ifdef USE_DMA_SPEC
     CLI_COMMAND_DEF("dma", "show/set DMA assignments", "<> | <device> <index> list | <device> <index> [<option>|none] | list | show", cliDma),
 #else
     CLI_COMMAND_DEF("dma", "show DMA assignments", "show", cliDma),
 #endif
 #endif
+
+#endif
 #ifdef USE_DSHOT_TELEMETRY
-    CLI_COMMAND_DEF("dshot_telemetry_info", "disply dshot telemetry info and stats", NULL, cliDshotTelemetryInfo),
+    CLI_COMMAND_DEF("dshot_telemetry_info", "display dshot telemetry info and stats", NULL, cliDshotTelemetryInfo),
 #endif
 #ifdef USE_DSHOT
     CLI_COMMAND_DEF("dshotprog", "program DShot ESC(s)", "<index> <command>+", cliDshotProg),

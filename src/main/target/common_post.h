@@ -24,10 +24,8 @@
 
 #include "build/version.h"
 
-// Targets with built-in vtx do not need external vtx
-#if defined(USE_VTX_RTC6705) && !defined(VTX_RTC6705_OPTIONAL)
-#undef USE_VTX_SMARTAUDIO
-#undef USE_VTX_TRAMP
+#if defined(USE_VTX_RTC6705_SOFTSPI)
+#define USE_VTX_RTC6705
 #endif
 
 #ifndef USE_DSHOT
@@ -256,7 +254,7 @@
 #undef USE_USB_MSC
 #endif
 
-#if (!defined(USE_FLASHFS) || !defined(USE_RTC_TIME) || !defined(USE_USB_MSC))
+#if (!defined(USE_FLASHFS) || !defined(USE_RTC_TIME) || !defined(USE_USB_MSC) || !defined(USE_PERSISTENT_OBJECTS))
 #undef USE_PERSISTENT_MSC_RTC
 #endif
 
@@ -264,6 +262,10 @@
 #undef  USE_SERIAL_4WAY_BLHELI_INTERFACE
 #elif !defined(USE_SERIAL_4WAY_BLHELI_INTERFACE) && (defined(USE_SERIAL_4WAY_BLHELI_BOOTLOADER) || defined(USE_SERIAL_4WAY_SK_BOOTLOADER))
 #define USE_SERIAL_4WAY_BLHELI_INTERFACE
+#endif
+
+#if !defined(USE_PWM_OUTPUT)
+#undef USE_SERIAL_4WAY_BLHELI_INTERFACE // implementation requires USE_PWM_OUTPUT to find motor outputs.
 #endif
 
 #if !defined(USE_LED_STRIP)
