@@ -61,10 +61,10 @@
 #define QUADSPI1_CS_FLAGS (QUADSPI_BK1_CS_HARDWARE | QUADSPI_BK2_CS_NONE | QUADSPI_CS_MODE_LINKED)
 
 #define USE_FLASH_CHIP
-#define EEPROM_IN_EXTERNAL_FLASH
-//#define EEPROM_IN_SDCARD
-//#define EEPROM_IN_RAM
-#if !defined(EEPROM_IN_RAM) && !defined(EEPROM_IN_SDCARD) && !defined(EEPROM_IN_EXTERNAL_FLASH)
+#define CONFIG_IN_EXTERNAL_FLASH
+//#define CONFIG_IN_SDCARD
+//#define CONFIG_IN_RAM
+#if !defined(CONFIG_IN_RAM) && !defined(CONFIG_IN_SDCARD) && !defined(CONFIG_IN_EXTERNAL_FLASH)
 #error "EEPROM storage location not defined"
 #endif
 
@@ -124,10 +124,14 @@
 #define SPI4_NSS_PIN            PE11
 
 #define USE_I2C
-#define USE_I2C_DEVICE_1
+#define USE_I2C_DEVICE_1        // Connected to BMP388 only
 #define I2C1_SCL                PB8
 #define I2C1_SDA                PB9
 #define I2C_DEVICE              (I2CDEV_1)
+
+#define USE_I2C_DEVICE_4        // Shared with motor outputs 5/6
+#define I2C4_SCL                PB6
+#define I2C4_SDA                PB7
 
 #define USE_MAG
 #define USE_MAG_HMC5883
