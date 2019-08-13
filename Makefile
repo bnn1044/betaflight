@@ -30,6 +30,9 @@ EXST      ?= no
 # compile for target loaded into RAM
 RAM_BASED ?= no
 
+# reserve space for custom defaults
+CUSTOM_DEFAULTS_EXTENDED ?= no
+
 # Debugger optons:
 #   empty           - ordinary build with all optimizations enabled
 #   RELWITHDEBINFO  - ordinary build with debug symbols and all optimizations enabled
@@ -123,7 +126,8 @@ FATFS_SRC       = $(notdir $(wildcard $(FATFS_DIR)/*.c))
 
 CSOURCES        := $(shell find $(SRC_DIR) -name '*.c')
 
-LD_FLAGS         :=
+LD_FLAGS        :=
+EXTRA_LD_FLAGS  :=
 
 #
 # Default Tool options - can be overridden in {mcu}.mk files.
@@ -183,6 +187,11 @@ TARGET_FLAGS := -DOPBL $(TARGET_FLAGS)
 .DEFAULT_GOAL := binary
 else
 .DEFAULT_GOAL := hex
+endif
+
+ifeq ($(CUSTOM_DEFAULTS_EXTENDED),yes)
+TARGET_FLAGS += -DUSE_CUSTOM_DEFAULTS=
+EXTRA_LD_FLAGS += -Wl,--defsym=USE_CUSTOM_DEFAULTS_EXTENDED=1
 endif
 
 INCLUDE_DIRS    := $(INCLUDE_DIRS) \
@@ -266,7 +275,8 @@ LD_FLAGS     = -lm \
               -Wl,--cref \
               -Wl,--no-wchar-size-warning \
               -Wl,--print-memory-usage \
-              -T$(LD_SCRIPT)
+              -T$(LD_SCRIPT) \
+               $(EXTRA_LD_FLAGS)
 endif
 
 ###############################################################################
@@ -343,14 +353,26 @@ $(TARGET_BIN): $(TARGET_UNPATCHED_BIN)
 	$(V1) cat $(TARGET_UNPATCHED_BIN).md5 | awk '{printf("%08x: %s",(1024*$(FIRMWARE_SIZE))-16,$$2);}' | xxd -r - $(TARGET_BIN)
 	$(V1) echo $(FIRMWARE_SIZE) | awk '{printf("-s 0x%08x -l 16 -c 16 %s",(1024*$$1)-16,"$(TARGET_BIN)");}' | xargs xxd
 
-	@echo "Patching MD5 hash into exst elf" "$(STDOUT)"
-	$(OBJCOPY) $(TARGET_ELF) --dump-section .exst_hash=$(TARGET_EXST_HASH_SECTION_FILE)
+# Note: From the objcopy manual "If you do not specify outfile, objcopy creates a temporary file and destructively renames the result with the name of infile"
+# Due to this a temporary file must be created and removed, even though we're only extracting data from the input file.
+# If this temporary file is NOT used the $(TARGET_ELF) is modified, and running make a second time will result in
+# a) regeneration of $(TARGET_BIN), and
+# b) the results of $(TARGET_BIN) will not be as expected.
+	@echo "Extracting HASH section from unpatched EXST elf $(TARGET_ELF)" "$(STDOUT)"
+	$(OBJCOPY) $(TARGET_ELF) $(TARGET_EXST_ELF).tmp --dump-section .exst_hash=$(TARGET_EXST_HASH_SECTION_FILE)
+	rm $(TARGET_EXST_ELF).tmp
+	
+	@echo "Patching MD5 hash into HASH section" "$(STDOUT)"
 	$(V1) cat $(TARGET_UNPATCHED_BIN).md5 | awk '{printf("%08x: %s",64-16,$$2);}' | xxd -r - $(TARGET_EXST_HASH_SECTION_FILE)
+	
+	@echo "Patching updated HASH section into $(TARGET_EXST_ELF)" "$(STDOUT)"
 	$(OBJCOPY) $(TARGET_ELF) $(TARGET_EXST_ELF) --update-section .exst_hash=$(TARGET_EXST_HASH_SECTION_FILE)
 
 $(TARGET_HEX): $(TARGET_BIN)
-	@echo "Creating EXST HEX from patched EXST ELF $(TARGET_HEX)" "$(STDOUT)"
-	$(V1) $(OBJCOPY) -O ihex --set-start 0x8000000 $(TARGET_EXST_ELF) $@
+	$(if $(EXST_ADJUST_VMA),,$(error "EXST_ADJUST_VMA not specified"))
+
+	@echo "Creating EXST HEX from patched EXST BIN $(TARGET_BIN), VMA Adjust $(EXST_ADJUST_VMA)" "$(STDOUT)"
+	$(V1) $(OBJCOPY) -I binary -O ihex --adjust-vma=$(EXST_ADJUST_VMA) $(TARGET_BIN) $@
 
 endif
 

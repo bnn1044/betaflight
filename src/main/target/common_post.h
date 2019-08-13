@@ -361,10 +361,18 @@ extern uint8_t __config_start;   // configured via linker script when building b
 extern uint8_t __config_end;
 #endif
 
-#if defined(USE_EXST)
+#if defined(USE_EXST) && !defined(RAMBASED)
 #define USE_FLASH_BOOT_LOADER
 #endif
 
 #if !defined(USE_RPM_FILTER)
 #undef USE_DYN_IDLE
+#endif
+
+#ifndef USE_ITERM_RELAX
+#undef USE_ABSOLUTE_CONTROL
+#endif
+
+#if defined(USE_CUSTOM_DEFAULTS)
+#define USE_CUSTOM_DEFAULTS_ADDRESS
 #endif

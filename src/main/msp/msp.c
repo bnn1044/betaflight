@@ -177,7 +177,7 @@ static uint32_t getFeatureMask(void)
     if (featureMaskIsCopied) {
         return featureMaskCopy;
     } else {
-        return featureMask();
+        return featureConfig()->enabledFeatures;
     }
 }
 
@@ -515,6 +515,7 @@ static bool mspCommonProcessOutCommand(uint8_t cmdMSP, sbuf_t *dst, mspPostProce
 #define TARGET_HAS_VCP_BIT 0
 #define TARGET_HAS_SOFTSERIAL_BIT 1
 #define TARGET_IS_UNIFIED_BIT 2
+#define TARGET_HAS_FLASH_BOOTLOADER_BIT 3
 
         uint8_t targetCapabilities = 0;
 #ifdef USE_VCP
@@ -526,7 +527,9 @@ static bool mspCommonProcessOutCommand(uint8_t cmdMSP, sbuf_t *dst, mspPostProce
 #if defined(USE_UNIFIED_TARGET)
         targetCapabilities |= 1 << TARGET_IS_UNIFIED_BIT;
 #endif
-
+#if defined(USE_FLASH_BOOT_LOADER)
+        targetCapabilities |= 1 << TARGET_HAS_FLASH_BOOTLOADER_BIT;
+#endif
         sbufWriteU8(dst, targetCapabilities);
 
         // Target name with explicit length
@@ -612,7 +615,7 @@ static bool mspCommonProcessOutCommand(uint8_t cmdMSP, sbuf_t *dst, mspPostProce
 
         // battery alerts
         sbufWriteU8(dst, (uint8_t)getBatteryState());
-		
+
         sbufWriteU16(dst, getBatteryVoltage()); // in 0.01V steps
         break;
     }
@@ -1420,6 +1423,9 @@ static bool mspProcessOutCommand(uint8_t cmdMSP, sbuf_t *dst)
         sbufWriteU16(dst, gyroConfig()->gyroCalibrationDuration);
         sbufWriteU16(dst, gyroConfig()->gyro_offset_yaw);
         sbufWriteU8(dst, gyroConfig()->checkOverflow);
+        //Added in MSP API 1.42
+        sbufWriteU8(dst, systemConfig()->debug_mode);
+        sbufWriteU8(dst, DEBUG_COUNT);
 
         break;
     case MSP_FILTER_CONFIG :
@@ -1453,7 +1459,18 @@ static bool mspProcessOutCommand(uint8_t cmdMSP, sbuf_t *dst)
         sbufWriteU16(dst, 0);
         sbufWriteU16(dst, 0);
 #endif
-
+#if defined(USE_GYRO_DATA_ANALYSE)
+        // Added in MSP API 1.42
+        sbufWriteU8(dst, gyroConfig()->dyn_notch_range);
+        sbufWriteU8(dst, gyroConfig()->dyn_notch_width_percent);
+        sbufWriteU16(dst, gyroConfig()->dyn_notch_q);
+        sbufWriteU16(dst, gyroConfig()->dyn_notch_min_hz);
+#else
+        sbufWriteU8(dst, 0);
+        sbufWriteU8(dst, 0);
+        sbufWriteU16(dst, 0);
+        sbufWriteU16(dst, 0);
+#endif
         break;
     case MSP_PID_ADVANCED:
         sbufWriteU16(dst, 0);
@@ -1520,6 +1537,12 @@ static bool mspProcessOutCommand(uint8_t cmdMSP, sbuf_t *dst)
         sbufWriteU8(dst, currentPidProfile->integrated_yaw_relax);
 #else
         sbufWriteU8(dst, 0);
+        sbufWriteU8(dst, 0);
+#endif
+#if defined(USE_ITERM_RELAX)
+        // Added in MSP API 1.42
+        sbufWriteU8(dst, currentPidProfile->iterm_relax_cutoff);
+#else
         sbufWriteU8(dst, 0);
 #endif
 
@@ -2075,6 +2098,10 @@ static mspResult_e mspProcessInCommand(uint8_t cmdMSP, sbuf_t *src)
             gyroConfigMutable()->gyro_offset_yaw = sbufReadU16(src);
             gyroConfigMutable()->checkOverflow = sbufReadU8(src);
         }
+        if (sbufBytesRemaining(src) >= 1) {
+            //Added in MSP API 1.42
+            systemConfigMutable()->debug_mode = sbufReadU8(src);
+        }
 
         validateAndFixGyroConfig();
 
@@ -2116,6 +2143,20 @@ static mspResult_e mspProcessInCommand(uint8_t cmdMSP, sbuf_t *src)
 #else
             sbufReadU16(src);
             sbufReadU16(src);
+            sbufReadU16(src);
+            sbufReadU16(src);
+#endif
+        }
+        if (sbufBytesRemaining(src) >= 6) {
+            // Added in MSP API 1.42
+#if defined(USE_GYRO_DATA_ANALYSE)
+            gyroConfigMutable()->dyn_notch_range = sbufReadU8(src);
+            gyroConfigMutable()->dyn_notch_width_percent = sbufReadU8(src);
+            gyroConfigMutable()->dyn_notch_q = sbufReadU16(src);
+            gyroConfigMutable()->dyn_notch_min_hz = sbufReadU16(src);
+#else
+            sbufReadU8(src);
+            sbufReadU8(src);
             sbufReadU16(src);
             sbufReadU16(src);
 #endif
@@ -2205,6 +2246,14 @@ static mspResult_e mspProcessInCommand(uint8_t cmdMSP, sbuf_t *src)
             currentPidProfile->integrated_yaw_relax = sbufReadU8(src);
 #else
             sbufReadU8(src);
+            sbufReadU8(src);
+#endif
+        }
+        if(sbufBytesRemaining(src) >= 1) {
+            // Added in MSP API 1.42
+#if defined(USE_ITERM_RELAX)
+            currentPidProfile->iterm_relax_cutoff = sbufReadU8(src);
+#else
             sbufReadU8(src);
 #endif
         }

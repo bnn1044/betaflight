@@ -20,37 +20,12 @@
 
 #pragma once
 
-#include "rx/rx_spi.h"
+#include <stdint.h>
 
-#define MAX_MISSING_PKT 100
+#include "common/axis.h"
+#include "flight/pid.h"
 
-#define DEBUG_DATA_ERROR_COUNT 0
-#define DEBUG_DATA_MISSING_PACKETS 1
-#define DEBUG_DATA_BAD_FRAME 2
-
-
-#define SYNC_DELAY_MAX 9000
-
-#define MAX_MISSING_PKT 100
-
-enum {
-    STATE_INIT = 0,
-    STATE_BIND,
-    STATE_BIND_TUNING,
-    STATE_BIND_BINDING1,
-    STATE_BIND_BINDING2,
-    STATE_BIND_COMPLETE,
-    STATE_STARTING,
-    STATE_UPDATE,
-    STATE_DATA,
-    STATE_TELEMETRY,
-    STATE_RESUME,
-};
-
-extern uint8_t listLength;
-extern uint32_t missingPackets;
-extern timeDelta_t timeoutUs;
-
-void initialiseData(bool inBindState);
-
-void nextChannel(uint8_t skip);
+void interpolatedSpInit(const pidProfile_t *pidProfile);
+float interpolatedSpApply(int axis, float pidFrequency, bool newRcFrame);
+float applyFfLimit(int axis, float value, float Kp, float currentPidSetpoint);
+bool shouldApplyFfLimits(int axis);
