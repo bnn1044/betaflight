@@ -137,6 +137,7 @@ bool cliMode = false;
 #include "pg/mco.h"
 #include "pg/motor.h"
 #include "pg/pinio.h"
+#include "pg/pin_pull_up_down.h"
 #include "pg/pg.h"
 #include "pg/pg_ids.h"
 #include "pg/rx.h"
@@ -305,75 +306,6 @@ typedef struct serialPassthroughPort_e {
     unsigned mode;
     serialPort_t *port;
 } serialPassthroughPort_t;
-
-static void backupPgConfig(const pgRegistry_t *pg)
-{
-    memcpy(pg->copy, pg->address, pg->size);
-}
-
-static void restorePgConfig(const pgRegistry_t *pg)
-{
-    memcpy(pg->address, pg->copy, pg->size);
-}
-
-static void backupConfigs(void)
-{
-    if (configIsInCopy) {
-        return;
-    }
-
-    // make copies of configs to do differencing
-    PG_FOREACH(pg) {
-        backupPgConfig(pg);
-    }
-
-    configIsInCopy = true;
-}
-
-static void restoreConfigs(void)
-{
-    if (!configIsInCopy) {
-        return;
-    }
-
-    PG_FOREACH(pg) {
-        restorePgConfig(pg);
-    }
-
-    configIsInCopy = false;
-}
-
-#if defined(USE_RESOURCE_MGMT) || defined(USE_TIMER_MGMT)
-static bool isReadingConfigFromCopy()
-{
-    return configIsInCopy;
-}
-#endif
-
-static bool isWritingConfigToCopy()
-{
-    return configIsInCopy
-#if defined(USE_CUSTOM_DEFAULTS)
-        && !processingCustomDefaults
-#endif
-        ;
-}
-
-static void backupAndResetConfigs(const bool useCustomDefaults)
-{
-    backupConfigs();
-
-    // reset all configs to defaults to do differencing
-    resetConfigs();
-
-#if defined(USE_CUSTOM_DEFAULTS)
-    if (useCustomDefaults) {
-        cliProcessCustomDefaults();
-    }
-#else
-    UNUSED(useCustomDefaults);
-#endif
-}
 
 static void cliWriterFlush()
 {
@@ -685,6 +617,77 @@ static const char *cliPrintSectionHeading(dumpFlags_t dumpMask, bool outputFlag,
     } else {
         return headingStr;
     }
+}
+
+static void backupPgConfig(const pgRegistry_t *pg)
+{
+    memcpy(pg->copy, pg->address, pg->size);
+}
+
+static void restorePgConfig(const pgRegistry_t *pg)
+{
+    memcpy(pg->address, pg->copy, pg->size);
+}
+
+static void backupConfigs(void)
+{
+    if (configIsInCopy) {
+        return;
+    }
+
+    // make copies of configs to do differencing
+    PG_FOREACH(pg) {
+        backupPgConfig(pg);
+    }
+
+    configIsInCopy = true;
+}
+
+static void restoreConfigs(void)
+{
+    if (!configIsInCopy) {
+        return;
+    }
+
+    PG_FOREACH(pg) {
+        restorePgConfig(pg);
+    }
+
+    configIsInCopy = false;
+}
+
+#if defined(USE_RESOURCE_MGMT) || defined(USE_TIMER_MGMT)
+static bool isReadingConfigFromCopy()
+{
+    return configIsInCopy;
+}
+#endif
+
+static bool isWritingConfigToCopy()
+{
+    return configIsInCopy
+#if defined(USE_CUSTOM_DEFAULTS)
+        && !processingCustomDefaults
+#endif
+        ;
+}
+
+static void backupAndResetConfigs(const bool useCustomDefaults)
+{
+    backupConfigs();
+
+    // reset all configs to defaults to do differencing
+    resetConfigs();
+
+#if defined(USE_CUSTOM_DEFAULTS)
+    if (useCustomDefaults) {
+        if (!cliProcessCustomDefaults()) {
+            cliPrintLine("###WARNING: NO CUSTOM DEFAULTS FOUND###");
+        }
+    }
+#else
+    UNUSED(useCustomDefaults);
+#endif
 }
 
 static uint8_t getPidProfileIndexToUse()
@@ -4211,7 +4214,7 @@ static void cliDefaults(char *cmdline)
                 }
             }
         } else {
-            cliPrintError("NO DEFAULTS FOUND");
+            cliPrintError("NO CUSTOM DEFAULTS FOUND");
         }
 
         return;
@@ -4865,6 +4868,14 @@ const cliResourceValue_t resourceTable[] = {
 #ifdef USE_SDCARD
     DEFS( OWNER_SDCARD_DETECT, PG_SDCARD_CONFIG, sdcardConfig_t, cardDetectTag ),
 #endif
+#if defined(STM32H7) && defined(USE_SDCARD_SDIO)
+    DEFS( OWNER_SDIO_CK,       PG_SDIO_PIN_CONFIG, sdioPinConfig_t, CKPin ),
+    DEFS( OWNER_SDIO_CMD,      PG_SDIO_PIN_CONFIG, sdioPinConfig_t, CMDPin ),
+    DEFS( OWNER_SDIO_D0,       PG_SDIO_PIN_CONFIG, sdioPinConfig_t, D0Pin ),
+    DEFS( OWNER_SDIO_D1,       PG_SDIO_PIN_CONFIG, sdioPinConfig_t, D1Pin ),
+    DEFS( OWNER_SDIO_D2,       PG_SDIO_PIN_CONFIG, sdioPinConfig_t, D2Pin ),
+    DEFS( OWNER_SDIO_D3,       PG_SDIO_PIN_CONFIG, sdioPinConfig_t, D3Pin ),
+#endif
 #ifdef USE_PINIO
     DEFA( OWNER_PINIO,         PG_PINIO_CONFIG, pinioConfig_t, ioTag, PINIO_COUNT ),
 #endif
@@ -4902,6 +4913,10 @@ const cliResourceValue_t resourceTable[] = {
     DEFS( OWNER_VTX_CS,        PG_VTX_IO_CONFIG, vtxIOConfig_t, csTag ),
     DEFS( OWNER_VTX_DATA,      PG_VTX_IO_CONFIG, vtxIOConfig_t, dataTag ),
     DEFS( OWNER_VTX_CLK,       PG_VTX_IO_CONFIG, vtxIOConfig_t, clockTag ),
+#endif
+#ifdef USE_PIN_PULL_UP_DOWN
+    DEFA( OWNER_PULLUP,        PG_PULLUP_CONFIG,   pinPullUpDownConfig_t, ioTag, PIN_PULL_UP_DOWN_COUNT ),
+    DEFA( OWNER_PULLDOWN,      PG_PULLDOWN_CONFIG, pinPullUpDownConfig_t, ioTag, PIN_PULL_UP_DOWN_COUNT ),
 #endif
 };
 
@@ -5830,14 +5845,17 @@ static void cliDshotTelemetryInfo(char *cmdline)
         cliPrintLinefeed();
 
 #ifdef USE_DSHOT_TELEMETRY_STATS
-        cliPrintLine("Motor     RPM   Invalid");
-        cliPrintLine("=====   =====   =======");
+        cliPrintLine("Motor      eRPM      RPM      Hz   Invalid");
+        cliPrintLine("=====   =======   ======   =====   =======");
 #else
-        cliPrintLine("Motor     RPM");
-        cliPrintLine("=====   =====");
+        cliPrintLine("Motor      eRPM      RPM      Hz");
+        cliPrintLine("=====   =======   ======   =====");
 #endif
         for (uint8_t i = 0; i < getMotorCount(); i++) {
-            cliPrintf("%5d   %5d   ", i, (int)getDshotTelemetry(i));
+            cliPrintf("%5d   %7d   %6d   %5d   ", i,
+                      (int)getDshotTelemetry(i) * 100,
+                      (int)getDshotTelemetry(i) * 100 * 2 / motorConfig()->motorPoleCount,
+                      (int)getDshotTelemetry(i) * 100 * 2 / motorConfig()->motorPoleCount / 60);
 #ifdef USE_DSHOT_TELEMETRY_STATS
             if (isDshotMotorTelemetryActive(i)) {
                 const int calcPercent = getDshotTelemetryMotorInvalidPercent(i);
@@ -6450,36 +6468,34 @@ void cliProcess(void)
 }
 
 #if defined(USE_CUSTOM_DEFAULTS)
-void cliProcessCustomDefaults(void)
+bool cliProcessCustomDefaults(void)
 {
-    if (processingCustomDefaults) {
-        return;
-    }
-
     char *customDefaultsPtr = customDefaultsStart;
-    if (isDefaults(customDefaultsPtr)) {
-#if !defined(DEBUG_CUSTOM_DEFAULTS)
-        bufWriter_t *cliWriterTemp = cliWriter;
-        cliWriter = NULL;
-#endif
-        memcpy(cliBufferTemp, cliBuffer, sizeof(cliBuffer));
-        uint32_t bufferIndexTemp = bufferIndex;
-        bufferIndex = 0;
-        processingCustomDefaults = true;
-
-        while (*customDefaultsPtr && *customDefaultsPtr != 0xFF && customDefaultsPtr < customDefaultsEnd) {
-            processCharacter(*customDefaultsPtr++);
-        }
-
-        processingCustomDefaults = false;
-#if !defined(DEBUG_CUSTOM_DEFAULTS)
-        cliWriter = cliWriterTemp;
-#endif
-        memcpy(cliBuffer, cliBufferTemp, sizeof(cliBuffer));
-        bufferIndex = bufferIndexTemp;
-    } else {
-        cliPrintError("NO DEFAULTS FOUND");
+    if (processingCustomDefaults || !isDefaults(customDefaultsPtr)) {
+        return false;
     }
+
+#if !defined(DEBUG_CUSTOM_DEFAULTS)
+    bufWriter_t *cliWriterTemp = cliWriter;
+    cliWriter = NULL;
+#endif
+    memcpy(cliBufferTemp, cliBuffer, sizeof(cliBuffer));
+    uint32_t bufferIndexTemp = bufferIndex;
+    bufferIndex = 0;
+    processingCustomDefaults = true;
+
+    while (*customDefaultsPtr && *customDefaultsPtr != 0xFF && customDefaultsPtr < customDefaultsEnd) {
+        processCharacter(*customDefaultsPtr++);
+    }
+
+    processingCustomDefaults = false;
+#if !defined(DEBUG_CUSTOM_DEFAULTS)
+    cliWriter = cliWriterTemp;
+#endif
+    memcpy(cliBuffer, cliBufferTemp, sizeof(cliBuffer));
+    bufferIndex = bufferIndexTemp;
+
+    return true;
 }
 #endif
 
