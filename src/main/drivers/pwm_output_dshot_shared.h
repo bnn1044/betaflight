@@ -44,10 +44,15 @@ extern motorDmaOutput_t dmaMotors[MAX_SUPPORTED_MOTORS];
 extern uint32_t readDoneCount;
 
 // TODO remove once debugging no longer needed
-FAST_RAM_ZERO_INIT extern uint32_t dshotInvalidPacketCount;
-FAST_RAM_ZERO_INIT extern uint32_t inputBuffer[GCR_TELEMETRY_INPUT_LEN];
-FAST_RAM_ZERO_INIT extern uint32_t setDirectionMicros;
 FAST_RAM_ZERO_INIT extern uint32_t inputStampUs;
+
+typedef struct dshotDMAHandlerCycleCounters_s {
+    uint32_t irqAt;
+    uint32_t changeDirectionCompletedAt;
+} dshotDMAHandlerCycleCounters_t;
+
+FAST_RAM_ZERO_INIT extern dshotDMAHandlerCycleCounters_t dshotDMAHandlerCycleCounters;
+
 #endif
 
 uint8_t getTimerIndex(TIM_TypeDef *timer);
@@ -66,10 +71,6 @@ FAST_CODE void pwmDshotSetDirectionOutput(
 #endif
 #endif
 );
-
-#ifdef USE_DSHOT_TELEMETRY
-FAST_CODE void pwmDshotSetDirectionInput(motorDmaOutput_t * const motor);
-#endif
 
 bool pwmStartDshotMotorUpdate(void);
 
