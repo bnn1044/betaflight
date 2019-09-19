@@ -2319,6 +2319,12 @@ static void cliSdInfo(char *cmdline)
 
     cliPrint("SD card: ");
 
+    if (sdcardConfig()->mode == SDCARD_MODE_NONE) {
+        cliPrintLine("Not configured");
+
+        return;
+    }
+
     if (!sdcard_isInserted()) {
         cliPrintLine("None inserted");
         return;
@@ -3017,12 +3023,14 @@ static void printBoardName(dumpFlags_t dumpMask)
 static void cliBoardName(char *cmdline)
 {
     const unsigned int len = strlen(cmdline);
-    if (len > 0 && boardInformationIsSet() && (len != strlen(getBoardName()) || strncmp(getBoardName(), cmdline, len))) {
-        cliPrintErrorLinef(ERROR_MESSAGE, "BOARD_NAME", getBoardName());
+    const char *boardName = getBoardName();
+    if (len > 0 && strlen(boardName) != 0 && boardInformationIsSet() && (len != strlen(boardName) || strncmp(boardName, cmdline, len))) {
+        cliPrintErrorLinef(ERROR_MESSAGE, "BOARD_NAME", boardName);
     } else {
-        if (len > 0) {
-            setBoardName(cmdline);
+        if (len > 0 && !configIsInCopy && setBoardName(cmdline)) {
             boardInformationUpdated = true;
+
+            cliPrintHashLine("Set board_name.");
         }
         printBoardName(DUMP_ALL);
     }
@@ -3038,12 +3046,14 @@ static void printManufacturerId(dumpFlags_t dumpMask)
 static void cliManufacturerId(char *cmdline)
 {
     const unsigned int len = strlen(cmdline);
-    if (len > 0 && boardInformationIsSet() && (len != strlen(getManufacturerId()) || strncmp(getManufacturerId(), cmdline, len))) {
-        cliPrintErrorLinef(ERROR_MESSAGE, "MANUFACTURER_ID", getManufacturerId());
+    const char *manufacturerId = getManufacturerId();
+    if (len > 0 && boardInformationIsSet() && strlen(manufacturerId) != 0 && (len != strlen(manufacturerId) || strncmp(manufacturerId, cmdline, len))) {
+        cliPrintErrorLinef(ERROR_MESSAGE, "MANUFACTURER_ID", manufacturerId);
     } else {
-        if (len > 0) {
-            setManufacturerId(cmdline);
+        if (len > 0 && !configIsInCopy && setManufacturerId(cmdline)) {
             boardInformationUpdated = true;
+
+            cliPrintHashLine("Set manufacturer_id.");
         }
         printManufacturerId(DUMP_ALL);
     }
@@ -3092,12 +3102,12 @@ static void cliSignature(char *cmdline)
         writeSignature(signatureStr, getSignature());
         cliPrintErrorLinef(ERROR_MESSAGE, "SIGNATURE", signatureStr);
     } else {
-        if (len > 0) {
-            setSignature(signature);
-
+        if (len > 0 && !configIsInCopy && setSignature(signature)) {
             signatureUpdated = true;
 
             writeSignature(signatureStr, getSignature());
+
+            cliPrintHashLine("Set signature.");
         } else if (signatureUpdated || signatureIsSet()) {
             writeSignature(signatureStr, getSignature());
         }
@@ -5616,28 +5626,12 @@ static void showTimers(void)
     cliRepeat('-', 23);
 #endif
 
-#ifdef USE_DSHOT_BITBANG
-    resourceOwner_t bitbangOwner = { OWNER_DSHOT_BITBANG, 0 };
-#endif
     int8_t timerNumber;
     for (int i = 0; (timerNumber = timerGetNumberByIndex(i)); i++) {
         cliPrintf("TIM%d:", timerNumber);
         bool timerUsed = false;
         for (unsigned timerIndex = 0; timerIndex < CC_CHANNELS_PER_TIMER; timerIndex++) {
             const resourceOwner_t *timerOwner = timerGetOwner(timerNumber, CC_CHANNEL_FROM_INDEX(timerIndex));
-#ifdef USE_DSHOT_BITBANG
-            if (!timerOwner->owner) {
-                const timerHardware_t* timer;
-                int pacerIndex = 0;
-                while ((timer = dshotBitbangGetPacerTimer(pacerIndex++))) {
-                    if (timerGetTIMNumber(timer->tim) == timerNumber && timer->channel == CC_CHANNEL_FROM_INDEX(timerIndex)) {
-                        timerOwner = &bitbangOwner;
-                        bitbangOwner.resourceIndex++;
-                        break;
-                    }
-                }
-            }
-#endif
             if (timerOwner->owner) {
                 if (!timerUsed) {
                     timerUsed = true;

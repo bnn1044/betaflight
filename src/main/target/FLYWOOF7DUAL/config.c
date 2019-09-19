@@ -18,25 +18,19 @@
  * If not, see <http://www.gnu.org/licenses/>.
  */
 
-#pragma once
+#include <stdint.h>
 
-#include "drivers/timer.h"
+#include "platform.h"
+#include "io/serial.h"
+#include "pg/piniobox.h"
+#include "target.h"
 
-typedef enum {
-    DSHOT_BITBANG_OFF,
-    DSHOT_BITBANG_ON,
-    DSHOT_BITBANG_AUTO,
-} dshotBitbangMode_e;
+#define  USE_TARGET_CONFIG
 
-typedef enum {
-    DSHOT_BITBANG_STATUS_OK,
-    DSHOT_BITBANG_STATUS_MOTOR_PIN_CONFLICT,
-    DSHOT_BITBANG_STATUS_NO_PACER,
-    DSHOT_BITBANG_STATUS_TOO_MANY_PORTS,
-} dshotBitbangStatus_e;
+void targetConfiguration(void)
+{
+    pinioBoxConfigMutable()->permanentId[0] = 40;
+    pinioBoxConfigMutable()->permanentId[1] = 41;
+    
+}
 
-struct motorDevConfig_s;
-struct motorDevice_s;
-struct motorDevice_s *dshotBitbangDevInit(const struct motorDevConfig_s *motorConfig, uint8_t motorCount);
-dshotBitbangStatus_e dshotBitbangGetStatus();
-const resourceOwner_t *dshotBitbangTimerGetOwner(int8_t timerNumber, uint16_t timerChannel);

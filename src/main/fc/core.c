@@ -310,7 +310,7 @@ void updateArmingStatus(void)
 #endif
 
 #ifdef USE_DSHOT_BITBANG
-        if (isDshotBitbangActive(&motorConfig()->dev) && dshotBitbangGetStatus() != DSHOT_BITBANG_OK) {
+        if (isDshotBitbangActive(&motorConfig()->dev) && dshotBitbangGetStatus() != DSHOT_BITBANG_STATUS_OK) {
             setArmingDisabled(ARMING_DISABLED_DSHOT_BITBANG);
         } else {
             unsetArmingDisabled(ARMING_DISABLED_DSHOT_BITBANG);
@@ -1017,6 +1017,7 @@ static FAST_CODE void subTaskPidController(timeUs_t currentTimeUs)
         && !runawayTakeoffCheckDisabled
         && !flipOverAfterCrashActive
         && !runawayTakeoffTemporarilyDisabled
+        && !FLIGHT_MODE(GPS_RESCUE_MODE)   // disable Runaway Takeoff triggering if GPS Rescue is active
         && (!featureIsEnabled(FEATURE_MOTOR_STOP) || airmodeIsEnabled() || (calculateThrottleStatus() != THROTTLE_LOW))) {
 
         if (((fabsf(pidData[FD_PITCH].Sum) >= RUNAWAY_TAKEOFF_PIDSUM_THRESHOLD)

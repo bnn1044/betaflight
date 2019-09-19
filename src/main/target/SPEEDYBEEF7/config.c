@@ -18,23 +18,25 @@
  * If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <stdbool.h>
 #include <stdint.h>
 
 #include "platform.h"
 
-#if defined(FLYWOOF405)
-#include "pg/piniobox.h"
-#endif
-
 #ifdef USE_TARGET_CONFIG
 
-#include "config_helper.h"
+#include "flight/mixer.h"
+#include "osd/osd.h"
 #include "io/serial.h"
-#include "pg/max7456.h"
-#include "telemetry/telemetry.h"
+#include "pg/pinio.h"
+#include "pg/piniobox.h"
+#include "pg/motor.h"
+#include "target.h"
 
-#define TELEMETRY_UART          SERIAL_PORT_USART1
+#include "config_helper.h"
+
+#define BLUETOOTH_MSP_UART          SERIAL_PORT_USART3
+#define BLUETOOTH_MSP_BAUDRATE      BAUD_19200
+#define TELEMETRY_UART              SERIAL_PORT_SOFTSERIAL1
 
 static targetSerialPortFunction_t targetSerialPortFunction[] = {
     { TELEMETRY_UART, FUNCTION_TELEMETRY_SMARTPORT },
@@ -42,15 +44,21 @@ static targetSerialPortFunction_t targetSerialPortFunction[] = {
 
 void targetConfiguration(void)
 {
-#if defined(FLYWOOF405)
-    pinioBoxConfigMutable()->permanentId[0] = 40;
-    pinioBoxConfigMutable()->permanentId[1] = 41;
-#endif
-    targetSerialPortFunctionConfig(targetSerialPortFunction, ARRAYLEN(targetSerialPortFunction));
-    telemetryConfigMutable()->halfDuplex = 0;
-    telemetryConfigMutable()->telemetry_inverted = true;
+    pinioConfigMutable()->config[0] = PINIO_CONFIG_OUT_INVERTED | PINIO_CONFIG_MODE_OUT_PP;
+    pinioBoxConfigMutable()->permanentId[0] = BOXARM;
+    
+    serialPortConfig_t *bluetoothMspUART = serialFindPortConfiguration(BLUETOOTH_MSP_UART);
+    if (bluetoothMspUART) {
+        bluetoothMspUART->functionMask = FUNCTION_MSP;
+        bluetoothMspUART->msp_baudrateIndex = BLUETOOTH_MSP_BAUDRATE;
+    }
 
-    // Mark MAX7456 CS pin as OPU
-    max7456ConfigMutable()->preInitOPU = true;
+    targetSerialPortFunctionConfig(targetSerialPortFunction, ARRAYLEN(targetSerialPortFunction));
+
+    osdConfigMutable()->item_pos[OSD_MAIN_BATT_VOLTAGE] = OSD_POS(1, 12) | OSD_PROFILE_1_FLAG;
+    osdConfigMutable()->item_pos[OSD_ALTITUDE] = OSD_POS(1, 11) | OSD_PROFILE_1_FLAG;
+
+    motorConfigMutable()->dev.motorPwmProtocol = PWM_TYPE_DSHOT600;
 }
+
 #endif

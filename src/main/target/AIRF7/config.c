@@ -18,25 +18,23 @@
  * If not, see <http://www.gnu.org/licenses/>.
  */
 
-#pragma once
+#include <stdint.h>
+#include "platform.h"
 
-#include "drivers/timer.h"
+#ifdef USE_TARGET_CONFIG
 
-typedef enum {
-    DSHOT_BITBANG_OFF,
-    DSHOT_BITBANG_ON,
-    DSHOT_BITBANG_AUTO,
-} dshotBitbangMode_e;
+#include "pg/pinio.h"
+#include "pg/piniobox.h"
 
-typedef enum {
-    DSHOT_BITBANG_STATUS_OK,
-    DSHOT_BITBANG_STATUS_MOTOR_PIN_CONFLICT,
-    DSHOT_BITBANG_STATUS_NO_PACER,
-    DSHOT_BITBANG_STATUS_TOO_MANY_PORTS,
-} dshotBitbangStatus_e;
+#include "drivers/io.h"
 
-struct motorDevConfig_s;
-struct motorDevice_s;
-struct motorDevice_s *dshotBitbangDevInit(const struct motorDevConfig_s *motorConfig, uint8_t motorCount);
-dshotBitbangStatus_e dshotBitbangGetStatus();
-const resourceOwner_t *dshotBitbangTimerGetOwner(int8_t timerNumber, uint16_t timerChannel);
+#include "config_helper.h"
+#include "config/feature.h"
+
+void targetConfiguration(void)
+{
+    pinioConfigMutable()->config[0] = PINIO_CONFIG_MODE_OUT_PP | PINIO_CONFIG_OUT_INVERTED;
+    pinioBoxConfigMutable()->permanentId[0] = 40;
+}
+
+#endif
