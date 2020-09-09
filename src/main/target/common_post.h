@@ -142,7 +142,7 @@
 #undef USE_VTX_TABLE
 #endif
 
-#if defined(USE_RX_FRSKY_SPI_D) || defined(USE_RX_FRSKY_SPI_X)
+#if defined(USE_RX_FRSKY_SPI_D) || defined(USE_RX_FRSKY_SPI_X) || defined(USE_RX_REDPINE_SPI)
 #define USE_RX_CC2500
 #define USE_RX_FRSKY_SPI
 #endif
@@ -161,27 +161,13 @@
 
 // Burst dshot to default off if not configured explicitly by target
 #ifndef ENABLE_DSHOT_DMAR
-#define ENABLE_DSHOT_DMAR false
+#define ENABLE_DSHOT_DMAR DSHOT_DMAR_OFF
 #endif
 
 // Some target doesn't define USE_ADC which USE_ADC_INTERNAL depends on
 #ifndef USE_ADC
 #undef USE_ADC_INTERNAL
 #endif
-
-#if (!defined(USE_SDCARD) && !defined(USE_FLASHFS)) || !defined(USE_BLACKBOX)
-#undef USE_USB_MSC
-#endif
-
-#if !defined(USE_VCP)
-#undef USE_USB_CDC_HID
-#undef USE_USB_MSC
-#endif
-
-#if defined(USE_USB_CDC_HID) || defined(USE_USB_MSC)
-#define USE_USB_ADVANCED_PROFILES
-#endif
-
 
 #if defined(USE_FLASH_W25M512)
 #define USE_FLASH_W25M
@@ -196,6 +182,23 @@
 
 #if defined(USE_FLASH_M25P16) || defined(USE_FLASH_W25N01G)
 #define USE_FLASH_CHIP
+#endif
+
+#ifndef USE_FLASH_CHIP
+#undef USE_FLASHFS
+#endif
+
+#if (!defined(USE_SDCARD) && !defined(USE_FLASHFS)) || !defined(USE_BLACKBOX)
+#undef USE_USB_MSC
+#endif
+
+#if !defined(USE_VCP)
+#undef USE_USB_CDC_HID
+#undef USE_USB_MSC
+#endif
+
+#if defined(USE_USB_CDC_HID) || defined(USE_USB_MSC)
+#define USE_USB_ADVANCED_PROFILES
 #endif
 
 #if defined(USE_MAX7456)
@@ -284,6 +287,7 @@
 
 #ifndef USE_DSHOT
 #undef USE_DSHOT_TELEMETRY
+#undef USE_DSHOT_BITBANG
 #endif
 
 #ifndef USE_DSHOT_TELEMETRY
@@ -372,4 +376,13 @@ extern uint8_t __config_end;
 
 #if defined(USE_CUSTOM_DEFAULTS)
 #define USE_CUSTOM_DEFAULTS_ADDRESS
+#endif
+
+#if !defined(USE_EXTI)
+#undef USE_RX_SPI
+#undef USE_RANGEFINDER_HCSR04
+#endif
+
+#if defined(USE_RX_SPI) || defined (USE_SERIALRX_SRXL2)
+#define USE_RX_BIND
 #endif

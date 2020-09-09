@@ -33,6 +33,8 @@
 #include "drivers/io.h"
 #include "drivers/rcc.h"
 
+static uint8_t spiRegisteredDeviceCount = 0;
+
 spiDevice_t spiDevice[SPIDEV_COUNT];
 
 SPIDevice spiDeviceByInstance(SPI_TypeDef *instance)
@@ -69,7 +71,7 @@ SPI_TypeDef *spiInstanceByDevice(SPIDevice device)
     return spiDevice[device].dev;
 }
 
-bool spiInit(SPIDevice device)
+bool spiInit(SPIDevice device, bool leadingEdge)
 {
     switch (device) {
     case SPIINVALID:
@@ -77,7 +79,7 @@ bool spiInit(SPIDevice device)
 
     case SPIDEV_1:
 #ifdef USE_SPI_DEVICE_1
-        spiInitDevice(device);
+        spiInitDevice(device, leadingEdge);
         return true;
 #else
         break;
@@ -85,7 +87,7 @@ bool spiInit(SPIDevice device)
 
     case SPIDEV_2:
 #ifdef USE_SPI_DEVICE_2
-        spiInitDevice(device);
+        spiInitDevice(device, leadingEdge);
         return true;
 #else
         break;
@@ -93,7 +95,7 @@ bool spiInit(SPIDevice device)
 
     case SPIDEV_3:
 #if defined(USE_SPI_DEVICE_3) && !defined(STM32F1)
-        spiInitDevice(device);
+        spiInitDevice(device, leadingEdge);
         return true;
 #else
         break;
@@ -101,7 +103,7 @@ bool spiInit(SPIDevice device)
 
     case SPIDEV_4:
 #if defined(USE_SPI_DEVICE_4)
-        spiInitDevice(device);
+        spiInitDevice(device, leadingEdge);
         return true;
 #else
         break;
@@ -109,7 +111,7 @@ bool spiInit(SPIDevice device)
 
     case SPIDEV_5:
 #if defined(USE_SPI_DEVICE_5)
-        spiInitDevice(device);
+        spiInitDevice(device, leadingEdge);
         return true;
 #else
         break;
@@ -117,7 +119,7 @@ bool spiInit(SPIDevice device)
 
     case SPIDEV_6:
 #if defined(USE_SPI_DEVICE_6)
-        spiInitDevice(device);
+        spiInitDevice(device, leadingEdge);
         return true;
 #else
         break;
@@ -282,4 +284,16 @@ bool spiBusTransactionReadRegisterBuffer(const busDevice_t *bus, uint8_t reg, ui
     return spiBusReadRegisterBuffer(bus, reg, data, length);
 }
 #endif // USE_SPI_TRANSACTION
+
+void spiBusDeviceRegister(const busDevice_t *bus)
+{
+    UNUSED(bus);
+
+    spiRegisteredDeviceCount++;
+}
+
+uint8_t spiGetRegisteredDeviceCount(void)
+{
+    return spiRegisteredDeviceCount;
+}
 #endif

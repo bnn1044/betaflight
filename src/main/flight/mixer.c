@@ -42,9 +42,7 @@
 #include "drivers/time.h"
 #include "drivers/io.h"
 
-#include "io/motors.h"
-
-#include "fc/config.h"
+#include "config/config.h"
 #include "fc/controlrate_profile.h"
 #include "fc/rc_controls.h"
 #include "fc/rc_modes.h"
@@ -74,16 +72,17 @@ PG_RESET_TEMPLATE(mixerConfig_t, mixerConfig,
     .mixerMode = DEFAULT_MIXER,
     .yaw_motors_reversed = false,
     .crashflip_motor_percent = 0,
+    .crashflip_expo = 35
 );
 
 PG_REGISTER_ARRAY(motorMixer_t, MAX_SUPPORTED_MOTORS, customMotorMixer, PG_MOTOR_MIXER, 0);
 
 #define PWM_RANGE_MID 1500
 
-static FAST_RAM_ZERO_INIT uint8_t motorCount;
-static FAST_RAM_ZERO_INIT float motorMixRange;
+static FAST_DATA_ZERO_INIT uint8_t motorCount;
+static FAST_DATA_ZERO_INIT float motorMixRange;
 
-float FAST_RAM_ZERO_INIT motor[MAX_SUPPORTED_MOTORS];
+float FAST_DATA_ZERO_INIT motor[MAX_SUPPORTED_MOTORS];
 float motor_disarmed[MAX_SUPPORTED_MOTORS];
 
 mixerMode_e currentMixerMode;
@@ -93,7 +92,7 @@ static motorMixer_t currentMixer[MAX_SUPPORTED_MOTORS];
 static motorMixer_t launchControlMixer[MAX_SUPPORTED_MOTORS];
 #endif
 
-static FAST_RAM_ZERO_INIT int throttleAngleCorrection;
+static FAST_DATA_ZERO_INIT int throttleAngleCorrection;
 
 static const motorMixer_t mixerQuadX[] = {
     { 1.0f, -1.0f,  1.0f, -1.0f },          // REAR_R
@@ -285,17 +284,24 @@ const mixer_t mixers[] = {
 };
 #endif // !USE_QUAD_MIXER_ONLY
 
-FAST_RAM_ZERO_INIT float motorOutputHigh, motorOutputLow;
+static FAST_DATA_ZERO_INIT bool feature3dEnabled;
+static FAST_DATA_ZERO_INIT float motorOutputLow;
+static FAST_DATA_ZERO_INIT float motorOutputHigh;
 
-static FAST_RAM_ZERO_INIT float disarmMotorOutput, deadbandMotor3dHigh, deadbandMotor3dLow;
-static FAST_RAM_ZERO_INIT float rcCommandThrottleRange;
+static FAST_DATA_ZERO_INIT float disarmMotorOutput, deadbandMotor3dHigh, deadbandMotor3dLow;
+static FAST_DATA_ZERO_INIT float rcCommandThrottleRange;
 #ifdef USE_DYN_IDLE
-static FAST_RAM_ZERO_INIT float idleMaxIncrease;
-static FAST_RAM_ZERO_INIT float idleThrottleOffset;
-static FAST_RAM_ZERO_INIT float idleMinMotorRps;
-static FAST_RAM_ZERO_INIT float idleP;
+static FAST_DATA_ZERO_INIT float idleMaxIncrease;
+static FAST_DATA_ZERO_INIT float idleThrottleOffset;
+static FAST_DATA_ZERO_INIT float idleMinMotorRps;
+static FAST_DATA_ZERO_INIT float idleP;
+static FAST_DATA_ZERO_INIT float oldMinRps;
 #endif
-
+#if defined(USE_BATTERY_VOLTAGE_SAG_COMPENSATION)
+static FAST_DATA_ZERO_INIT float vbatSagCompensationFactor;
+static FAST_DATA_ZERO_INIT float vbatFull;
+static FAST_DATA_ZERO_INIT float vbatRangeToCompensate;
+#endif
 
 uint8_t getMotorCount(void)
 {
@@ -341,14 +347,42 @@ void initEscEndpoints(void)
         motorOutputLimit = currentPidProfile->motor_output_limit / 100.0f;
     }
 
-    motorInitEndpoints(motorOutputLimit, &motorOutputLow, &motorOutputHigh, &disarmMotorOutput, &deadbandMotor3dHigh, &deadbandMotor3dLow);
+    motorInitEndpoints(motorConfig(), motorOutputLimit, &motorOutputLow, &motorOutputHigh, &disarmMotorOutput, &deadbandMotor3dHigh, &deadbandMotor3dLow);
+    if (!feature3dEnabled && currentPidProfile->idle_min_rpm) {
+        motorOutputLow = DSHOT_MIN_THROTTLE;
+    }
 
     rcCommandThrottleRange = PWM_RANGE_MAX - PWM_RANGE_MIN;
+}
+
+// Initialize pidProfile related mixer settings
+void mixerInitProfile(void)
+{
+#ifdef USE_DYN_IDLE
+    idleMinMotorRps = currentPidProfile->idle_min_rpm * 100.0f / 60.0f;
+    idleMaxIncrease = currentPidProfile->idle_max_increase * 0.001f;
+    idleP = currentPidProfile->idle_p * 0.0001f;
+    oldMinRps = 0;
+#endif
+
+#if defined(USE_BATTERY_VOLTAGE_SAG_COMPENSATION)
+    vbatSagCompensationFactor = 0.0f;
+    if (currentPidProfile->vbat_sag_compensation > 0) {
+        //TODO: Make this voltage user configurable
+        vbatFull = CELL_VOLTAGE_FULL_CV;
+        vbatRangeToCompensate = vbatFull - batteryConfig()->vbatwarningcellvoltage;
+        if (vbatRangeToCompensate > 0) {
+            vbatSagCompensationFactor = ((float)currentPidProfile->vbat_sag_compensation) / 100.0f;
+        }
+    }
+#endif
 }
 
 void mixerInit(mixerMode_e mixerMode)
 {
     currentMixerMode = mixerMode;
+
+    feature3dEnabled = featureIsEnabled(FEATURE_3D);
 
     initEscEndpoints();
 #ifdef USE_SERVOS
@@ -356,12 +390,12 @@ void mixerInit(mixerMode_e mixerMode)
         mixerTricopterInit();
     }
 #endif
+
 #ifdef USE_DYN_IDLE
-    idleMinMotorRps = currentPidProfile->idle_min_rpm * 100.0f / 60.0f;
-    idleMaxIncrease = currentPidProfile->idle_max_increase * 0.001f;
     idleThrottleOffset = motorConfig()->digitalIdleOffsetValue * 0.0001f;
-    idleP = currentPidProfile->idle_p * 0.0001f;
 #endif
+
+    mixerInitProfile();
 }
 
 #ifdef USE_LAUNCH_CONTROL
@@ -471,13 +505,13 @@ void stopMotors(void)
     delay(50); // give the timers and ESCs a chance to react.
 }
 
-static FAST_RAM_ZERO_INIT float throttle = 0;
-static FAST_RAM_ZERO_INIT float loggingThrottle = 0;
-static FAST_RAM_ZERO_INIT float motorOutputMin;
-static FAST_RAM_ZERO_INIT float motorRangeMin;
-static FAST_RAM_ZERO_INIT float motorRangeMax;
-static FAST_RAM_ZERO_INIT float motorOutputRange;
-static FAST_RAM_ZERO_INIT int8_t motorOutputMixSign;
+static FAST_DATA_ZERO_INIT float throttle = 0;
+static FAST_DATA_ZERO_INIT float mixerThrottle = 0;
+static FAST_DATA_ZERO_INIT float motorOutputMin;
+static FAST_DATA_ZERO_INIT float motorRangeMin;
+static FAST_DATA_ZERO_INIT float motorRangeMax;
+static FAST_DATA_ZERO_INIT float motorOutputRange;
+static FAST_DATA_ZERO_INIT int8_t motorOutputMixSign;
 
 
 static void calculateThrottleAndCurrentMotorEndpoints(timeUs_t currentTimeUs)
@@ -485,12 +519,9 @@ static void calculateThrottleAndCurrentMotorEndpoints(timeUs_t currentTimeUs)
     static uint16_t rcThrottlePrevious = 0;   // Store the last throttle direction for deadband transitions
     static timeUs_t reversalTimeUs = 0; // time when motors last reversed in 3D mode
     static float motorRangeMinIncrease = 0;
-#ifdef USE_DYN_IDLE
-    static float oldMinRps;
-#endif
-    float currentThrottleInputRange = 0;
 
-    if (featureIsEnabled(FEATURE_3D)) {
+    float currentThrottleInputRange = 0;
+    if (feature3dEnabled) {
         uint16_t rcCommand3dDeadBandLow;
         uint16_t rcCommand3dDeadBandHigh;
 
@@ -595,7 +626,6 @@ static void calculateThrottleAndCurrentMotorEndpoints(timeUs_t currentTimeUs)
         throttle = rcCommand[THROTTLE] - PWM_RANGE_MIN + throttleAngleCorrection;
 #ifdef USE_DYN_IDLE
         if (idleMinMotorRps > 0.0f) {
-            motorOutputLow = DSHOT_MIN_THROTTLE;
             const float maxIncrease = isAirmodeActivated() ? idleMaxIncrease : 0.04f;
             const float minRps = rpmMinMotorFrequency();
             const float targetRpsChangeRate = (idleMinMotorRps - minRps) * currentPidProfile->idle_adjustment_speed;
@@ -609,14 +639,31 @@ static void calculateThrottleAndCurrentMotorEndpoints(timeUs_t currentTimeUs)
             DEBUG_SET(DEBUG_DYN_IDLE, 1, targetRpsChangeRate);
             DEBUG_SET(DEBUG_DYN_IDLE, 2, error);
             DEBUG_SET(DEBUG_DYN_IDLE, 3, minRps);
-            
+        } else {
+            motorRangeMinIncrease = 0;
         }
 #endif
+
+#if defined(USE_BATTERY_VOLTAGE_SAG_COMPENSATION)
+        float motorRangeAttenuationFactor = 0;
+        // reduce motorRangeMax when battery is full
+        if (vbatSagCompensationFactor > 0.0f) {
+            const uint16_t currentCellVoltage = getBatterySagCellVoltage();
+            // batteryGoodness = 1 when voltage is above vbatFull, and 0 when voltage is below vbatLow
+            float batteryGoodness = 1.0f - constrainf((vbatFull - currentCellVoltage) / vbatRangeToCompensate, 0.0f, 1.0f);
+            motorRangeAttenuationFactor = (vbatRangeToCompensate / vbatFull) * batteryGoodness * vbatSagCompensationFactor;
+            DEBUG_SET(DEBUG_BATTERY, 2, batteryGoodness * 100);
+            DEBUG_SET(DEBUG_BATTERY, 3, motorRangeAttenuationFactor * 1000);
+        }
+        motorRangeMax = motorOutputHigh - motorRangeAttenuationFactor * (motorOutputHigh - motorOutputLow);
+#else
+        motorRangeMax = motorOutputHigh;
+#endif
+
         currentThrottleInputRange = rcCommandThrottleRange;
         motorRangeMin = motorOutputLow + motorRangeMinIncrease * (motorOutputHigh - motorOutputLow);
-        motorRangeMax = motorOutputHigh;
         motorOutputMin = motorRangeMin;
-        motorOutputRange = motorOutputHigh - motorOutputMin;
+        motorOutputRange = motorRangeMax - motorRangeMin;
         motorOutputMixSign = 1;
     }
 
@@ -629,18 +676,26 @@ static void calculateThrottleAndCurrentMotorEndpoints(timeUs_t currentTimeUs)
 static void applyFlipOverAfterCrashModeToMotors(void)
 {
     if (ARMING_FLAG(ARMED)) {
-        float stickDeflectionPitchAbs = getRcDeflectionAbs(FD_PITCH);
-        float stickDeflectionRollAbs = getRcDeflectionAbs(FD_ROLL);
-        float stickDeflectionYawAbs = getRcDeflectionAbs(FD_YAW);
+        const float flipPowerFactor = 1.0f - mixerConfig()->crashflip_expo / 100.0f;
+        const float stickDeflectionPitchAbs = getRcDeflectionAbs(FD_PITCH);
+        const float stickDeflectionRollAbs = getRcDeflectionAbs(FD_ROLL);
+        const float stickDeflectionYawAbs = getRcDeflectionAbs(FD_YAW);
+
+        const float stickDeflectionPitchExpo = flipPowerFactor * stickDeflectionPitchAbs + power3(stickDeflectionPitchAbs) * (1 - flipPowerFactor);
+        const float stickDeflectionRollExpo = flipPowerFactor * stickDeflectionRollAbs + power3(stickDeflectionRollAbs) * (1 - flipPowerFactor);
+        const float stickDeflectionYawExpo = flipPowerFactor * stickDeflectionYawAbs + power3(stickDeflectionYawAbs) * (1 - flipPowerFactor);
+
         float signPitch = getRcDeflection(FD_PITCH) < 0 ? 1 : -1;
         float signRoll = getRcDeflection(FD_ROLL) < 0 ? 1 : -1;
         float signYaw = (getRcDeflection(FD_YAW) < 0 ? 1 : -1) * (mixerConfig()->yaw_motors_reversed ? 1 : -1);
 
-        float stickDeflectionLength = sqrtf(stickDeflectionPitchAbs*stickDeflectionPitchAbs + stickDeflectionRollAbs*stickDeflectionRollAbs);
+        float stickDeflectionLength = sqrtf(sq(stickDeflectionPitchAbs) + sq(stickDeflectionRollAbs));
+        float stickDeflectionExpoLength = sqrtf(sq(stickDeflectionPitchExpo) + sq(stickDeflectionRollExpo));
 
         if (stickDeflectionYawAbs > MAX(stickDeflectionPitchAbs, stickDeflectionRollAbs)) {
             // If yaw is the dominant, disable pitch and roll
             stickDeflectionLength = stickDeflectionYawAbs;
+            stickDeflectionExpoLength = stickDeflectionYawExpo;
             signRoll = 0;
             signPitch = 0;
         } else {
@@ -648,7 +703,7 @@ static void applyFlipOverAfterCrashModeToMotors(void)
             signYaw = 0;
         }
 
-        float cosPhi = (stickDeflectionPitchAbs + stickDeflectionRollAbs) / (sqrtf(2.0f) * stickDeflectionLength);
+        const float cosPhi = (stickDeflectionLength > 0) ? (stickDeflectionPitchAbs + stickDeflectionRollAbs) / (sqrtf(2.0f) * stickDeflectionLength) : 0;
         const float cosThreshold = sqrtf(3.0f)/2.0f; // cos(PI/6.0f)
 
         if (cosPhi < cosThreshold) {
@@ -661,22 +716,23 @@ static void applyFlipOverAfterCrashModeToMotors(void)
         }
 
         // Apply a reasonable amount of stick deadband
-        const float flipStickRange = 1.0f - CRASH_FLIP_STICK_MINF;
-        float flipPower = MAX(0.0f, stickDeflectionLength - CRASH_FLIP_STICK_MINF) / flipStickRange;
+        const float crashFlipStickMinExpo = flipPowerFactor * CRASH_FLIP_STICK_MINF + power3(CRASH_FLIP_STICK_MINF) * (1 - flipPowerFactor);
+        const float flipStickRange = 1.0f - crashFlipStickMinExpo;
+        const float flipPower = MAX(0.0f, stickDeflectionExpoLength - crashFlipStickMinExpo) / flipStickRange;
 
         for (int i = 0; i < motorCount; ++i) {
             float motorOutputNormalised =
                 signPitch*currentMixer[i].pitch +
                 signRoll*currentMixer[i].roll +
                 signYaw*currentMixer[i].yaw;
-                
+
             if (motorOutputNormalised < 0) {
                 if (mixerConfig()->crashflip_motor_percent > 0) {
                     motorOutputNormalised = -motorOutputNormalised * (float)mixerConfig()->crashflip_motor_percent / 100.0f;
                 } else {
                     motorOutputNormalised = 0;
                 }
-            } 
+            }
             motorOutputNormalised = MIN(1.0f, flipPower * motorOutputNormalised);
             float motorOutput = motorOutputMin + motorOutputNormalised * motorOutputRange;
 
@@ -772,7 +828,7 @@ static void updateDynLpfCutoffs(timeUs_t currentTimeUs, float throttle)
 }
 #endif
 
-FAST_CODE_NOINLINE void mixTable(timeUs_t currentTimeUs, uint8_t vbatPidCompensation)
+FAST_CODE_NOINLINE void mixTable(timeUs_t currentTimeUs)
 {
     // Find min and max throttle based on conditions. Throttle has to be known before mixing
     calculateThrottleAndCurrentMotorEndpoints(currentTimeUs);
@@ -791,7 +847,7 @@ FAST_CODE_NOINLINE void mixTable(timeUs_t currentTimeUs, uint8_t vbatPidCompensa
         activeMixer = &launchControlMixer[0];
     }
 #endif
-    
+
     // Calculate and Limit the PID sum
     const float scaledAxisPidRoll =
         constrainf(pidData[FD_ROLL].Sum, -currentPidProfile->pidSumLimit, currentPidProfile->pidSumLimit) / PID_MIXER_SCALING;
@@ -814,9 +870,6 @@ FAST_CODE_NOINLINE void mixTable(timeUs_t currentTimeUs, uint8_t vbatPidCompensa
         scaledAxisPidYaw = -scaledAxisPidYaw;
     }
 
-    // Calculate voltage compensation
-    const float vbatCompensationFactor = vbatPidCompensation ? calculateVbatPidCompensation() : 1.0f;
-
     // Apply the throttle_limit_percent to scale or limit the throttle based on throttle_limit_type
     if (currentControlRateProfile->throttle_limit_type != THROTTLE_LIMIT_TYPE_OFF) {
         throttle = applyThrottleLimit(throttle);
@@ -828,7 +881,7 @@ FAST_CODE_NOINLINE void mixTable(timeUs_t currentTimeUs, uint8_t vbatPidCompensa
     // 50% throttle provides the maximum authority for yaw recovery when airmode is not active.
     // When airmode is active the throttle setting doesn't impact recovery authority.
     if (yawSpinDetected && !airmodeEnabled) {
-        throttle = 0.5f;   // 
+        throttle = 0.5f;   //
     }
 #endif // USE_YAW_SPIN_RECOVERY
 
@@ -849,8 +902,6 @@ FAST_CODE_NOINLINE void mixTable(timeUs_t currentTimeUs, uint8_t vbatPidCompensa
             scaledAxisPidRoll  * activeMixer[i].roll +
             scaledAxisPidPitch * activeMixer[i].pitch +
             scaledAxisPidYaw   * activeMixer[i].yaw;
-
-        mix *= vbatCompensationFactor;  // Add voltage compensation
 
         if (mix > motorMixMax) {
             motorMixMax = mix;
@@ -891,7 +942,7 @@ FAST_CODE_NOINLINE void mixTable(timeUs_t currentTimeUs, uint8_t vbatPidCompensa
     throttle += pidGetAirmodeThrottleOffset();
     float airmodeThrottleChange = 0;
 #endif
-    loggingThrottle = throttle;
+    mixerThrottle = throttle;
 
     motorMixRange = motorMixMax - motorMixMin;
     if (motorMixRange > 1.0f) {
@@ -917,7 +968,7 @@ FAST_CODE_NOINLINE void mixTable(timeUs_t currentTimeUs, uint8_t vbatPidCompensa
 
     if (featureIsEnabled(FEATURE_MOTOR_STOP)
         && ARMING_FLAG(ARMED)
-        && !featureIsEnabled(FEATURE_3D)
+        && !feature3dEnabled
         && !airmodeEnabled
         && !FLIGHT_MODE(GPS_RESCUE_MODE)   // disable motor_stop while GPS Rescue is active
         && (rcData[THROTTLE] < rxConfig()->mincheck)) {
@@ -934,7 +985,43 @@ void mixerSetThrottleAngleCorrection(int correctionValue)
     throttleAngleCorrection = correctionValue;
 }
 
-float mixerGetLoggingThrottle(void)
+float mixerGetThrottle(void)
 {
-    return loggingThrottle;
+    return mixerThrottle;
+}
+
+mixerMode_e getMixerMode(void)
+{
+    return currentMixerMode;
+}
+
+bool mixerModeIsFixedWing(mixerMode_e mixerMode)
+{
+    switch (mixerMode) {
+    case MIXER_FLYING_WING:
+    case MIXER_AIRPLANE:
+    case MIXER_CUSTOM_AIRPLANE:
+        return true;
+
+        break;
+    default:
+        return false;
+
+        break;
+    }
+}
+
+bool isFixedWing(void)
+{
+    return mixerModeIsFixedWing(currentMixerMode);
+}
+
+float getMotorOutputLow(void)
+{
+    return motorOutputLow;
+}
+
+float getMotorOutputHigh(void)
+{
+    return motorOutputHigh;
 }
